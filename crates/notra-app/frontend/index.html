@@ -318,8 +318,12 @@
                   <strong id="diffLeftLabel">原始</strong>
                   <span class="diff-arrow" aria-hidden="true">→</span>
                   <strong id="diffRightLabel">修改</strong>
+                  <span class="diff-change-count" id="diffChangeCount">0 处变更</span>
                 </div>
                 <div class="diff-actions">
+                  <button type="button" class="tool-button" id="diffPrevButton" title="上一处变更"><span class="icon-slot" data-icon="ArrowUp"></span><span>上一处</span></button>
+                  <button type="button" class="tool-button" id="diffNextButton" title="下一处变更"><span class="icon-slot" data-icon="ArrowDown"></span><span>下一处</span></button>
+                  <button type="button" class="tool-button" id="diffIgnoreWhitespaceButton" title="忽略空白差异" aria-pressed="false"><span class="icon-slot" data-icon="Eraser"></span><span data-label>空白</span></button>
                   <button type="button" class="tool-button" id="diffLayoutButton" title="切换并排/内联"><span class="icon-slot" data-icon="Columns2"></span><span data-label>并排</span></button>
                   <button type="button" class="tool-button" id="diffSwapButton" title="交换左右"><span class="icon-slot" data-icon="Replace"></span><span>交换</span></button>
                   <button type="button" class="tool-button" id="diffCloseButton" title="关闭对比 Esc"><span class="icon-slot" data-icon="X"></span><span>关闭</span></button>

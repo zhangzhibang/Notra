@@ -834,8 +834,12 @@ type DiffSession = {
   ownsOriginal: boolean;
   ownsModified: boolean;
   renderSideBySide: boolean;
+  ignoreWhitespace: boolean;
+  changeCount: number;
 };
 let diffSession: DiffSession | null = null;
+let diffPreferredSideBySide = true;
+let diffPreferredIgnoreWhitespace = false;
 let sessionTimer = 0;
 let sessionWriteQueue: Promise<void> = Promise.resolve();
 let unsavedResolver: ((value: UnsavedChoice) => void) | null = null;
@@ -1615,6 +1619,18 @@ function registerAppCommands() {
       allowInInput: true,
       enabled: () => Boolean(diffSession),
     }),
+    command("diff.toggleIgnoreWhitespace", "切换忽略空白差异", "查找", toggleDiffIgnoreWhitespace, {
+      allowInInput: true,
+      enabled: () => Boolean(diffSession),
+    }),
+    command("diff.nextChange", "下一处变更", "查找", () => navigateDiffChange("next"), {
+      allowInInput: true,
+      enabled: () => Boolean(diffSession),
+    }),
+    command("diff.previousChange", "上一处变更", "查找", () => navigateDiffChange("previous"), {
+      allowInInput: true,
+      enabled: () => Boolean(diffSession),
+    }),
     command("diff.close", "关闭对比", "查找", closeDiffSession, {
       allowInInput: true,
       enabled: () => Boolean(diffSession),
@@ -1863,6 +1879,9 @@ function bindActions() {
   $("diffCloseButton").addEventListener("click", closeDiffSession);
   $("diffSwapButton").addEventListener("click", swapDiffSides);
   $("diffLayoutButton").addEventListener("click", toggleDiffLayout);
+  $("diffIgnoreWhitespaceButton").addEventListener("click", toggleDiffIgnoreWhitespace);
+  $("diffNextButton").addEventListener("click", () => navigateDiffChange("next"));
+  $("diffPrevButton").addEventListener("click", () => navigateDiffChange("previous"));
   $("editorQuickStart").querySelectorAll<HTMLButtonElement>("[data-quick-action]").forEach((button) => {
     button.addEventListener("click", () => void runQuickStartAction(button.dataset.quickAction ?? ""));
   });
@@ -5641,6 +5660,9 @@ function renderChrome() {
   $<HTMLButtonElement>("menuCloseDiffButton").disabled = !diffSession;
   $<HTMLButtonElement>("diffSwapButton").disabled = !diffSession;
   $<HTMLButtonElement>("diffLayoutButton").disabled = !diffSession;
+  $<HTMLButtonElement>("diffIgnoreWhitespaceButton").disabled = !diffSession;
+  $<HTMLButtonElement>("diffNextButton").disabled = !diffSession || (diffSession?.changeCount ?? 0) === 0;
+  $<HTMLButtonElement>("diffPrevButton").disabled = !diffSession || (diffSession?.changeCount ?? 0) === 0;
   ["menuMarkdownWysiwygButton", "menuMarkdownSplitButton", "menuMarkdownSourceButton"].forEach((id) => {
     $<HTMLButtonElement>(id).disabled = !markdownDocument;
   });
@@ -5669,7 +5691,10 @@ function renderChrome() {
       .join(" · ");
   $("statusRight").innerHTML = diffSession
     ? [
-      diffSession.renderSideBySide ? "并排对比" : "内联对比",
+      `${diffSession.changeCount} 处变更`,
+      diffSession.renderSideBySide ? "并排" : "内联",
+      diffSession.ignoreWhitespace ? "忽略空白" : "保留空白",
+      "F7/⇧F7 跳转",
       "Esc 关闭",
     ].map((item) => `<span>${item}</span>`).join(`<span class="dot"></span>`)
     : [
@@ -7860,12 +7885,15 @@ function ensureDiffEditor() {
     lineHeight: editorLineHeight(),
     readOnly: false,
     originalEditable: false,
-    renderSideBySide: true,
+    renderSideBySide: diffPreferredSideBySide,
     enableSplitViewResizing: true,
     renderIndicators: true,
-    ignoreTrimWhitespace: false,
+    ignoreTrimWhitespace: diffPreferredIgnoreWhitespace,
     minimap: { enabled: false },
     scrollbar: { verticalScrollbarSize: 10, horizontalScrollbarSize: 10 },
+  });
+  diffEditor.onDidUpdateDiff(() => {
+    refreshDiffChangeCount();
   });
   return diffEditor;
 }
@@ -7915,21 +7943,29 @@ function openDiffSession(options: {
     modifiedModel,
     ownsOriginal: true,
     ownsModified,
-    renderSideBySide: true,
+    renderSideBySide: diffPreferredSideBySide,
+    ignoreWhitespace: diffPreferredIgnoreWhitespace,
+    changeCount: 0,
   };
   instance.setModel({ original: originalModel, modified: modifiedModel });
   instance.updateOptions({
     originalEditable: options.originalReadOnly === false,
     readOnly: options.modifiedReadOnly === true,
     renderSideBySide: diffSession.renderSideBySide,
+    ignoreTrimWhitespace: diffSession.ignoreWhitespace,
   });
   $("diffLeftLabel").textContent = options.leftLabel;
   $("diffRightLabel").textContent = options.rightLabel;
   setDiffSurfaceOpen(true);
   renderDiffToolbar();
+  refreshDiffChangeCount();
   window.requestAnimationFrame(() => {
     instance.layout();
     instance.focus();
+    // Jump to first change when available.
+    window.setTimeout(() => {
+      if ((diffSession?.changeCount ?? 0) > 0) navigateDiffChange("next", false);
+    }, 30);
   });
   log(`已打开对比：${options.leftLabel} ↔ ${options.rightLabel}`);
   renderChrome();
@@ -7973,10 +8009,13 @@ function swapDiffSides() {
     ownsOriginal: session.ownsModified,
     ownsModified: session.ownsOriginal,
     renderSideBySide: session.renderSideBySide,
+    ignoreWhitespace: session.ignoreWhitespace,
+    changeCount: session.changeCount,
   };
   diffEditor.setModel({ original: nextOriginal, modified: nextModified });
   $("diffLeftLabel").textContent = diffSession.leftLabel;
   $("diffRightLabel").textContent = diffSession.rightLabel;
+  refreshDiffChangeCount();
   log("已交换对比左右侧");
   renderChrome();
 }
@@ -7984,6 +8023,7 @@ function swapDiffSides() {
 function toggleDiffLayout() {
   if (!diffSession || !diffEditor) return;
   diffSession.renderSideBySide = !diffSession.renderSideBySide;
+  diffPreferredSideBySide = diffSession.renderSideBySide;
   diffEditor.updateOptions({ renderSideBySide: diffSession.renderSideBySide });
   renderDiffToolbar();
   requestEditorLayout();
@@ -7991,15 +8031,63 @@ function toggleDiffLayout() {
   renderChrome();
 }
 
+function toggleDiffIgnoreWhitespace() {
+  if (!diffSession || !diffEditor) return;
+  diffSession.ignoreWhitespace = !diffSession.ignoreWhitespace;
+  diffPreferredIgnoreWhitespace = diffSession.ignoreWhitespace;
+  diffEditor.updateOptions({ ignoreTrimWhitespace: diffSession.ignoreWhitespace });
+  renderDiffToolbar();
+  refreshDiffChangeCount();
+  log(diffSession.ignoreWhitespace ? "已忽略空白差异" : "已保留空白差异");
+  renderChrome();
+}
+
+function refreshDiffChangeCount() {
+  if (!diffSession || !diffEditor) return;
+  const changes = diffEditor.getLineChanges() ?? [];
+  diffSession.changeCount = changes.length;
+  const count = $("diffChangeCount");
+  if (count) {
+    count.textContent = changes.length === 0 ? "无差异" : `${changes.length} 处变更`;
+    count.classList.toggle("is-empty", changes.length === 0);
+  }
+  const disabled = changes.length === 0;
+  $<HTMLButtonElement>("diffNextButton").disabled = disabled;
+  $<HTMLButtonElement>("diffPrevButton").disabled = disabled;
+}
+
+function navigateDiffChange(target: "next" | "previous", announce = true) {
+  if (!diffSession || !diffEditor) return;
+  refreshDiffChangeCount();
+  if (diffSession.changeCount === 0) {
+    if (announce) log("当前没有可跳转的变更");
+    return;
+  }
+  diffEditor.goToDiff(target);
+  diffEditor.focus();
+  if (announce) log(target === "next" ? "已跳到下一处变更" : "已跳到上一处变更");
+}
+
 function renderDiffToolbar() {
-  const button = $<HTMLButtonElement>("diffLayoutButton");
-  if (!button) return;
-  const sideBySide = diffSession?.renderSideBySide !== false;
-  button.classList.toggle("state-on", sideBySide);
-  button.title = sideBySide ? "切换为内联对比" : "切换为并排对比";
-  const label = button.querySelector<HTMLElement>("[data-label]");
-  if (label) label.textContent = sideBySide ? "并排" : "内联";
-  setIconSlot(button.querySelector(".icon-slot"), sideBySide ? "Columns2" : "List");
+  const layoutButton = $<HTMLButtonElement>("diffLayoutButton");
+  if (layoutButton) {
+    const sideBySide = diffSession?.renderSideBySide !== false;
+    layoutButton.classList.toggle("state-on", sideBySide);
+    layoutButton.title = sideBySide ? "切换为内联对比" : "切换为并排对比";
+    const label = layoutButton.querySelector<HTMLElement>("[data-label]");
+    if (label) label.textContent = sideBySide ? "并排" : "内联";
+    setIconSlot(layoutButton.querySelector(".icon-slot"), sideBySide ? "Columns2" : "List");
+  }
+  const ignoreButton = $<HTMLButtonElement>("diffIgnoreWhitespaceButton");
+  if (ignoreButton) {
+    const ignore = Boolean(diffSession?.ignoreWhitespace);
+    ignoreButton.classList.toggle("state-on", ignore);
+    ignoreButton.setAttribute("aria-pressed", String(ignore));
+    ignoreButton.title = ignore ? "保留空白差异" : "忽略空白差异";
+    const label = ignoreButton.querySelector<HTMLElement>("[data-label]");
+    if (label) label.textContent = ignore ? "忽略空白" : "空白";
+  }
+  refreshDiffChangeCount();
 }
 
 function openCompareOpenTabMenu() {
