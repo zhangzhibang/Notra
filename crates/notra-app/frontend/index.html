@@ -137,6 +137,8 @@
           <span class="tool-divider"></span>
           <button class="tool-button" id="findButton" aria-label="查找 Ctrl+F" title="查找 Ctrl+F" aria-keyshortcuts="Control+F"><span class="icon-slot" data-icon="Search"></span><span data-label>查找</span></button>
           <button class="tool-button" id="replaceButton" aria-label="替换 Ctrl+H" title="替换 Ctrl+H" aria-keyshortcuts="Control+H"><span class="icon-slot" data-icon="Replace"></span><span data-label>替换</span></button>
+          <button class="tool-button" id="workspaceFindToolButton" aria-label="在文件中查找" title="在文件中查找"><span class="icon-slot" data-icon="FileSearch"></span><span data-label>文件查找</span></button>
+          <button class="tool-button" id="batchEditButton" data-menu-trigger aria-label="批量改行" title="批量改行" aria-haspopup="menu" aria-controls="batchEditMenu" aria-expanded="false"><span class="icon-slot" data-icon="ListTree"></span><span data-label>批量改行</span></button>
           <button class="tool-button" id="goToLineButton" aria-label="跳转到行 Ctrl+G" title="跳转到行 Ctrl+G" aria-keyshortcuts="Control+G"><span class="icon-slot" data-icon="ListRestart"></span><span data-label>跳转到行</span></button>
           <button class="tool-button" id="commandButton" aria-label="命令面板 Ctrl+P" title="命令面板 Ctrl+P" aria-keyshortcuts="Control+P"><span class="icon-slot" data-icon="Command"></span><span data-label>命令面板</span></button>
           <span class="tool-divider"></span>
@@ -272,10 +274,11 @@
                   </button>
                 </div>
                 <input class="hidden" id="currentReplaceInput" autocomplete="off" aria-label="替换为" placeholder="替换为" />
-                <div class="current-find-options">
+                <div class="current-find-options" role="group" aria-label="查找选项">
                   <label title="匹配大小写"><input type="checkbox" id="currentMatchCaseInput" /><span>Aa</span></label>
                   <label title="全词匹配"><input type="checkbox" id="currentWholeWordInput" /><span>W</span></label>
                   <label title="正则表达式"><input type="checkbox" id="currentRegexInput" /><span>.*</span></label>
+                  <label title="扩展模式：\n \t \r \\"><input type="checkbox" id="currentExtendedInput" /><span>\n</span></label>
                 </div>
                 <span class="current-find-count" id="currentFindCount">0 个结果</span>
                 <div class="current-find-actions">
@@ -314,6 +317,23 @@
           <button class="ghost-button" id="clearRecentButton">清空</button>
         </header>
         <div class="menu-list" id="recentList"></div>
+      </section>
+
+      <section class="popover menu-popover hidden" id="batchEditMenu" role="menu" aria-label="批量改行">
+        <header class="popover-head">
+          <strong>批量改行</strong>
+          <span>对选中行或全文生效</span>
+        </header>
+        <div class="menu-list">
+          <button type="button" role="menuitem" data-batch-action="prefix-lines"><span class="icon-slot" data-icon="BetweenVerticalStart"></span><span>每行加前缀…</span></button>
+          <button type="button" role="menuitem" data-batch-action="suffix-lines"><span class="icon-slot" data-icon="BetweenVerticalEnd"></span><span>每行加后缀…</span></button>
+          <button type="button" role="menuitem" data-batch-action="trim-trailing"><span class="icon-slot" data-icon="Eraser"></span><span>删除行尾空白</span></button>
+          <button type="button" role="menuitem" data-batch-action="sort-asc"><span class="icon-slot" data-icon="ArrowUp"></span><span>按升序排列行</span></button>
+          <button type="button" role="menuitem" data-batch-action="sort-desc"><span class="icon-slot" data-icon="ArrowDown"></span><span>按降序排列行</span></button>
+          <button type="button" role="menuitem" data-batch-action="delete-empty"><span class="icon-slot" data-icon="Trash2"></span><span>删除空行</span></button>
+          <button type="button" role="menuitem" data-batch-action="duplicate-line"><span class="icon-slot" data-icon="Copy"></span><span>向下复制行</span></button>
+          <button type="button" role="menuitem" data-batch-action="select-all-occurrences"><span class="icon-slot" data-icon="Highlighter"></span><span>选中所有同词</span></button>
+        </div>
       </section>
 
       <section class="popover hidden" id="encodingMenu">

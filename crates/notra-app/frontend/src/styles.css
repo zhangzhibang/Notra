@@ -5493,3 +5493,56 @@ tbody tr.result-active {
   flex-wrap: wrap;
   max-width: 420px;
 }
+
+.find-result-diff {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.diff-line {
+  display: block;
+  padding: 2px 6px;
+  border-radius: 4px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.diff-line.diff-old {
+  background: color-mix(in srgb, #ef4444 14%, transparent);
+  color: color-mix(in srgb, #b91c1c 80%, var(--text, #0f172a));
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+.diff-line.diff-new {
+  background: color-mix(in srgb, #22c55e 16%, transparent);
+  color: color-mix(in srgb, #15803d 85%, var(--text, #0f172a));
+}
+
+.replace-preview-row .find-result-preview {
+  flex: 1;
+  min-width: 0;
+}
+
+body.current-find-open .current-find-options label {
+  opacity: 1;
+}
+
+#batchEditMenu .menu-list button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+}
+
+#batchEditMenu .menu-list .icon-slot {
+  width: 16px;
+  height: 16px;
+  display: inline-grid;
+  place-items: center;
+}

@@ -1583,14 +1583,17 @@ function registerAppCommands() {
     editorCommand("editor.trimTrailingWhitespace", "删除行尾空白", "editor.action.trimTrailingWhitespace", editorOnly),
     editorCommand("editor.sortLinesAscending", "按升序排列行", "editor.action.sortLinesAscending", editorOnly),
     editorCommand("editor.sortLinesDescending", "按降序排列行", "editor.action.sortLinesDescending", editorOnly),
-    command("search.find", "查找", "查找", () => openCurrentFind("find"), { allowInInput: true, when: () => isEditorSurfaceFocused() }),
-    command("search.replace", "替换", "查找", () => openCurrentFind("replace"), { allowInInput: true, when: () => isEditorSurfaceFocused() }),
+    command("search.find", "查找", "查找", () => openCurrentFind("find"), { allowInInput: true }),
+    command("search.replace", "替换", "查找", () => openCurrentFind("replace"), { allowInInput: true }),
     command("search.next", "查找下一个", "查找", () => findNextResult(), { allowInInput: true, when: () => isEditorSurfaceFocused() }),
     command("search.previous", "查找上一个", "查找", () => findPreviousResult(), { allowInInput: true, when: () => isEditorSurfaceFocused() }),
     command("search.workspaceFind", "在文件中查找", "查找", () => openWorkspaceFind("workspace-find"), { allowInInput: true, enabled: () => Boolean(state.workspace) }),
     command("search.workspaceReplace", "在文件中替换", "查找", () => openWorkspaceFind("workspace-replace"), { allowInInput: true, enabled: () => Boolean(state.workspace) }),
     command("search.findAllCurrent", "查找当前文件全部结果", "查找", () => findCurrent(true), { allowInInput: true, when: () => isEditorSurfaceFocused() }),
     command("search.clearResults", "清除查找结果", "查找", clearSearchResults),
+    command("editor.prefixLines", "每行加前缀", "编辑", () => void transformSelectedLines("prefix"), { when: editorOnly }),
+    command("editor.suffixLines", "每行加后缀", "编辑", () => void transformSelectedLines("suffix"), { when: editorOnly }),
+    command("editor.deleteEmptyLines", "删除空行", "编辑", deleteEmptyLines, { when: editorOnly }),
     command("navigation.goToLine", "跳转到行", "导航", goToLine, { when: () => isEditorSurfaceFocused() }),
     command("navigation.quickOpen", "快速打开文件", "导航", openQuickOpen, { allowInInput: true }),
     command("navigation.commandPalette", "命令面板", "导航", () => openCommandPalette("commands"), { allowInInput: true }),
@@ -1815,6 +1818,18 @@ function bindActions() {
     setFindView("replace");
     toggleFindOpen({ prefillFromSelection: true });
   });
+  $("workspaceFindToolButton").addEventListener("click", () => {
+    void openWorkspaceFind("workspace-find");
+  });
+  $("batchEditButton").addEventListener("click", () => {
+    toggleMenu("batchEditMenu");
+  });
+  $("batchEditMenu").querySelectorAll<HTMLButtonElement>("[data-batch-action]").forEach((button) => {
+    button.addEventListener("click", () => {
+      closeMenus();
+      void runBatchEditAction(button.dataset.batchAction ?? "");
+    });
+  });
   $("commandButton").addEventListener("click", () => openCommandPalette("commands"));
   $("goToLineButton").addEventListener("click", goToLine);
   $("wordWrapButton").addEventListener("click", toggleWordWrap);
@@ -1860,8 +1875,16 @@ function bindActions() {
   });
   $("currentFindInput").addEventListener("input", scheduleCurrentFind);
   $("currentReplaceInput").addEventListener("input", syncCurrentFindControls);
-  ["currentMatchCaseInput", "currentWholeWordInput", "currentRegexInput"].forEach((id) => {
-    $(id).addEventListener("change", scheduleCurrentFind);
+  ["currentMatchCaseInput", "currentWholeWordInput", "currentRegexInput", "currentExtendedInput"].forEach((id) => {
+    $(id).addEventListener("change", () => {
+      if (id === "currentRegexInput" && ($("currentRegexInput") as HTMLInputElement).checked) {
+        ($("currentExtendedInput") as HTMLInputElement).checked = false;
+      }
+      if (id === "currentExtendedInput" && ($("currentExtendedInput") as HTMLInputElement).checked) {
+        ($("currentRegexInput") as HTMLInputElement).checked = false;
+      }
+      scheduleCurrentFind();
+    });
   });
   $("currentFindInput").addEventListener("keydown", (event) => {
     const keyboardEvent = event as KeyboardEvent;
@@ -5556,6 +5579,9 @@ function renderChrome() {
   $<HTMLButtonElement>("menuLowercaseButton").disabled = doc.readOnly;
   $<HTMLButtonElement>("formatDocumentButton").disabled = doc.readOnly || !isFormattingActionSupported();
   $<HTMLButtonElement>("menuFormatDocumentButton").disabled = doc.readOnly || !isFormattingActionSupported();
+  $<HTMLButtonElement>("workspaceFindToolButton").disabled = !state.workspace;
+  $<HTMLButtonElement>("batchEditButton").disabled = doc.readOnly || isMarkdownWysiwygActive(doc);
+  $<HTMLButtonElement>("findRailButton").disabled = !state.workspace;
   ["menuMarkdownWysiwygButton", "menuMarkdownSplitButton", "menuMarkdownSourceButton"].forEach((id) => {
     $<HTMLButtonElement>(id).disabled = !markdownDocument;
   });
@@ -5605,6 +5631,7 @@ function commandElementIds(): Record<string, string> {
   formatDocumentButton: "editor.formatDocument",
   findButton: "search.find",
   replaceButton: "search.replace",
+  workspaceFindToolButton: "search.workspaceFind",
   goToLineButton: "navigation.goToLine",
   commandButton: "navigation.commandPalette",
   findRailButton: "search.workspaceFind",
@@ -6519,11 +6546,12 @@ function renderProgressiveReplaceResults(
       }
       const match = item.matches[matchIndex];
       const row = document.createElement("button");
-      row.className = "find-result-row";
+      row.className = "find-result-row replace-preview-row";
       row.dataset.path = item.path;
       row.dataset.line = String(match.line);
       row.dataset.column = String(match.column);
-      row.innerHTML = `<span class="find-result-line">${match.line}:${match.column}</span><span class="find-result-preview">${escapeHtml(match.matchedText)} <span class="replace-arrow">→</span> ${escapeHtml(replacement)}</span>`;
+      const afterLine = buildReplacedLinePreview(match, replacement);
+      row.innerHTML = `<span class="find-result-line">${match.line}:${match.column}</span><span class="find-result-preview find-result-diff"><span class="diff-line diff-old" title="原文">${escapeHtml(match.lineText || match.matchedText)}</span><span class="diff-line diff-new" title="替换后">${escapeHtml(afterLine)}</span></span>`;
       rows?.appendChild(row);
       matchIndex += 1;
       rendered += 1;
@@ -7394,7 +7422,9 @@ function syncSearchControlsToCurrent() {
   ($("currentReplaceInput") as HTMLInputElement).value = ($("replaceInput") as HTMLInputElement).value;
   ($("currentMatchCaseInput") as HTMLInputElement).checked = ($("matchCaseInput") as HTMLInputElement).checked;
   ($("currentWholeWordInput") as HTMLInputElement).checked = ($("wholeWordInput") as HTMLInputElement).checked;
-  ($("currentRegexInput") as HTMLInputElement).checked = getSearchMode() === "regex";
+  const mode = getSearchMode();
+  ($("currentRegexInput") as HTMLInputElement).checked = mode === "regex";
+  ($("currentExtendedInput") as HTMLInputElement).checked = mode === "extended";
   renderCurrentFindMode();
   renderCurrentFindCount();
 }
@@ -7404,7 +7434,9 @@ function syncCurrentFindControls() {
   ($("replaceInput") as HTMLInputElement).value = ($("currentReplaceInput") as HTMLInputElement).value;
   ($("matchCaseInput") as HTMLInputElement).checked = ($("currentMatchCaseInput") as HTMLInputElement).checked;
   ($("wholeWordInput") as HTMLInputElement).checked = ($("currentWholeWordInput") as HTMLInputElement).checked;
-  setSearchMode(($("currentRegexInput") as HTMLInputElement).checked ? "regex" : "literal");
+  if (($("currentRegexInput") as HTMLInputElement).checked) setSearchMode("regex");
+  else if (($("currentExtendedInput") as HTMLInputElement).checked) setSearchMode("extended");
+  else setSearchMode("literal");
   scheduleSessionSave();
 }
 
@@ -7581,7 +7613,7 @@ function selectedEditorTextForFind() {
   return normalized.slice(0, 300);
 }
 
-function toggleMenu(id: "languageMenu" | "encodingMenu" | "lineEndingMenu" | "recentMenu") {
+function toggleMenu(id: "languageMenu" | "encodingMenu" | "lineEndingMenu" | "recentMenu" | "batchEditMenu") {
   const menu = $(id);
   const open = menu.classList.contains("hidden");
   closeMenus();
@@ -7590,6 +7622,8 @@ function toggleMenu(id: "languageMenu" | "encodingMenu" | "lineEndingMenu" | "re
   if (open) {
     const triggerId = id === "recentMenu"
       ? "recentButton"
+      : id === "batchEditMenu"
+        ? "batchEditButton"
       : id === "languageMenu"
         ? "languageButton"
         : id === "encodingMenu"
@@ -7598,9 +7632,9 @@ function toggleMenu(id: "languageMenu" | "encodingMenu" | "lineEndingMenu" | "re
     const trigger = $<HTMLButtonElement>(triggerId);
     const rect = trigger.getBoundingClientRect();
     menu.style.right = "auto";
-    const menuWidth = menu.offsetWidth || (id === "recentMenu" ? 480 : id === "languageMenu" ? 430 : 360);
+    const menuWidth = menu.offsetWidth || (id === "recentMenu" ? 480 : id === "languageMenu" ? 430 : id === "batchEditMenu" ? 280 : 360);
     menu.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - menuWidth - 8))}px`;
-    if (id === "recentMenu") {
+    if (id === "recentMenu" || id === "batchEditMenu") {
       const menuHeight = menu.offsetHeight || Math.min(560, window.innerHeight - 120);
       menu.style.bottom = "auto";
       menu.style.top = `${Math.max(8, Math.min(rect.bottom + 6, window.innerHeight - menuHeight - 8))}px`;
@@ -7662,6 +7696,7 @@ function closeMenus() {
   $("encodingMenu").classList.add("hidden");
   $("lineEndingMenu").classList.add("hidden");
   $("recentMenu").classList.add("hidden");
+  $("batchEditMenu").classList.add("hidden");
   $("tabMenu").classList.add("hidden");
   $("treeMenu").classList.add("hidden");
   $("markdownContextMenu").classList.add("hidden");
@@ -7675,7 +7710,7 @@ function closeMenus() {
   document.querySelectorAll<HTMLButtonElement>(".app-menu-trigger").forEach((trigger) => {
     trigger.setAttribute("aria-expanded", "false");
   });
-  ["languageButton", "encodingButton", "lineEndingButton", "recentButton"].forEach((id) => {
+  ["languageButton", "encodingButton", "lineEndingButton", "recentButton", "batchEditButton"].forEach((id) => {
     $<HTMLButtonElement>(id).setAttribute("aria-expanded", "false");
   });
 }
@@ -7726,6 +7761,125 @@ function openQuickOpen() {
 function openCurrentFind(view: "find" | "replace") {
   setFindView(view);
   toggleFindOpen({ prefillFromSelection: true });
+}
+
+function buildReplacedLinePreview(match: TextMatchDto, replacement: string) {
+  const line = match.lineText || match.matchedText;
+  const matched = match.matchedText;
+  if (!matched) return line;
+  const columnIndex = Math.max(0, (match.column || 1) - 1);
+  if (line.slice(columnIndex, columnIndex + matched.length) === matched) {
+    return `${line.slice(0, columnIndex)}${replacement}${line.slice(columnIndex + matched.length)}`;
+  }
+  const index = line.indexOf(matched);
+  if (index >= 0) return `${line.slice(0, index)}${replacement}${line.slice(index + matched.length)}`;
+  return `${matched} → ${replacement}`;
+}
+
+async function runBatchEditAction(action: string) {
+  switch (action) {
+    case "prefix-lines":
+      await transformSelectedLines("prefix");
+      return;
+    case "suffix-lines":
+      await transformSelectedLines("suffix");
+      return;
+    case "trim-trailing":
+      runEditorAction("editor.action.trimTrailingWhitespace", "已删除行尾空白");
+      return;
+    case "sort-asc":
+      runEditorAction("editor.action.sortLinesAscending", "已按升序排列行");
+      return;
+    case "sort-desc":
+      runEditorAction("editor.action.sortLinesDescending", "已按降序排列行");
+      return;
+    case "delete-empty":
+      deleteEmptyLines();
+      return;
+    case "duplicate-line":
+      runEditorAction("editor.action.copyLinesDownAction", "已复制当前行");
+      return;
+    case "select-all-occurrences":
+      runEditorAction("editor.action.selectHighlights");
+      return;
+    default:
+      return;
+  }
+}
+
+async function transformSelectedLines(mode: "prefix" | "suffix") {
+  if (!editor || isMarkdownWysiwygActive() || activeDocument().readOnly) {
+    log("当前文档不可编辑");
+    return;
+  }
+  const value = await askTextInput({
+    title: mode === "prefix" ? "每行加前缀" : "每行加后缀",
+    subtitle: "对选中行生效；无选区时作用于全文",
+    label: mode === "prefix" ? "前缀文本" : "后缀文本",
+    value: "",
+  });
+  if (value === null) return;
+  const model = activeDocument().model;
+  const selection = editor.getSelection();
+  const hasRange = Boolean(selection && !selection.isEmpty());
+  const startLine = hasRange ? Math.min(selection!.startLineNumber, selection!.endLineNumber) : 1;
+  const endLine = hasRange ? Math.max(selection!.startLineNumber, selection!.endLineNumber) : model.getLineCount();
+  const edits: monaco.editor.IIdentifiedSingleEditOperation[] = [];
+  for (let line = startLine; line <= endLine; line += 1) {
+    if (mode === "prefix") {
+      edits.push({
+        range: new monaco.Range(line, 1, line, 1),
+        text: value,
+        forceMoveMarkers: true,
+      });
+    } else {
+      const column = model.getLineMaxColumn(line);
+      edits.push({
+        range: new monaco.Range(line, column, line, column),
+        text: value,
+        forceMoveMarkers: true,
+      });
+    }
+  }
+  if (edits.length === 0) return;
+  editor.pushUndoStop();
+  editor.executeEdits(`batch-${mode}-lines`, edits);
+  editor.pushUndoStop();
+  editor.focus();
+  log(mode === "prefix" ? `已为 ${edits.length} 行添加前缀` : `已为 ${edits.length} 行添加后缀`);
+}
+
+function deleteEmptyLines() {
+  if (!editor || isMarkdownWysiwygActive() || activeDocument().readOnly) {
+    log("当前文档不可编辑");
+    return;
+  }
+  const model = activeDocument().model;
+  const selection = editor.getSelection();
+  const hasRange = Boolean(selection && !selection.isEmpty());
+  const startLine = hasRange ? Math.min(selection!.startLineNumber, selection!.endLineNumber) : 1;
+  const endLine = hasRange ? Math.max(selection!.startLineNumber, selection!.endLineNumber) : model.getLineCount();
+  const edits: monaco.editor.IIdentifiedSingleEditOperation[] = [];
+  for (let line = endLine; line >= startLine; line -= 1) {
+    if (model.getLineContent(line).trim().length > 0) continue;
+    const startColumn = 1;
+    const endColumn = line < model.getLineCount() ? 1 : model.getLineMaxColumn(line);
+    const endLineNumber = line < model.getLineCount() ? line + 1 : line;
+    edits.push({
+      range: new monaco.Range(line, startColumn, endLineNumber, endColumn),
+      text: "",
+      forceMoveMarkers: true,
+    });
+  }
+  if (edits.length === 0) {
+    log("没有可删除的空行");
+    return;
+  }
+  editor.pushUndoStop();
+  editor.executeEdits("batch-delete-empty-lines", edits);
+  editor.pushUndoStop();
+  editor.focus();
+  log(`已删除 ${edits.length} 个空行`);
 }
 
 function runEditorAction(actionId: string, successMessage?: string) {
