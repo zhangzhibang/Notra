@@ -287,6 +287,13 @@
                   <label title="正则表达式"><input type="checkbox" id="currentRegexInput" /><span>.*</span></label>
                   <label title="扩展模式：\n \t \r \\"><input type="checkbox" id="currentExtendedInput" /><span>\n</span></label>
                 </div>
+                <div class="current-find-snippets" id="currentFindSnippets" role="group" aria-label="常用模式">
+                  <button type="button" class="find-snippet" data-snippet="trailing-space" data-regex="true" title="行尾空白">行尾空白</button>
+                  <button type="button" class="find-snippet" data-snippet="multi-blank" data-regex="true" title="连续空行">连续空行</button>
+                  <button type="button" class="find-snippet" data-snippet="todo" data-regex="false" title="TODO/FIXME">TODO</button>
+                  <button type="button" class="find-snippet" data-snippet="number" data-regex="true" title="数字">数字</button>
+                  <button type="button" class="find-snippet" data-snippet="email" data-regex="true" title="邮箱">邮箱</button>
+                </div>
                 <span class="current-find-count" id="currentFindCount">0 个结果</span>
                 <div class="current-find-actions">
                   <button id="currentFindPreviousButton" aria-label="查找上一个" title="查找上一个"><span class="icon-slot" data-icon="ArrowUp"></span></button>
@@ -311,6 +318,10 @@
                 <button type="button" class="tool-button" data-quick-action="compare-files"><span class="icon-slot" data-icon="Columns2"></span><span>对比文件</span></button>
                 <button type="button" class="tool-button" data-quick-action="commands"><span class="icon-slot" data-icon="Command"></span><span>命令面板</span></button>
               </div>
+              <div class="editor-quick-recent hidden" id="editorQuickRecent">
+                <div class="editor-quick-recent-title">最近打开</div>
+                <div class="editor-quick-recent-list" id="editorQuickRecentList"></div>
+              </div>
             </div>
             <div class="diff-host hidden" id="diffHost" aria-label="文件对比">
               <header class="diff-toolbar">
@@ -323,6 +334,9 @@
                 <div class="diff-actions">
                   <button type="button" class="tool-button" id="diffPrevButton" title="上一处变更"><span class="icon-slot" data-icon="ArrowUp"></span><span>上一处</span></button>
                   <button type="button" class="tool-button" id="diffNextButton" title="下一处变更"><span class="icon-slot" data-icon="ArrowDown"></span><span>下一处</span></button>
+                  <button type="button" class="tool-button" id="diffRevertHunkButton" title="将当前变更还原为左侧"><span class="icon-slot" data-icon="Undo2"></span><span>还原块</span></button>
+                  <button type="button" class="tool-button" id="diffCopyHunkButton" title="复制当前变更块"><span class="icon-slot" data-icon="Copy"></span><span>复制块</span></button>
+                  <button type="button" class="tool-button" id="diffHideUnchangedButton" title="折叠未变更区域" aria-pressed="false"><span class="icon-slot" data-icon="ListFilter"></span><span data-label>折叠相同</span></button>
                   <button type="button" class="tool-button" id="diffIgnoreWhitespaceButton" title="忽略空白差异" aria-pressed="false"><span class="icon-slot" data-icon="Eraser"></span><span data-label>空白</span></button>
                   <button type="button" class="tool-button" id="diffLayoutButton" title="切换并排/内联"><span class="icon-slot" data-icon="Columns2"></span><span data-label>并排</span></button>
                   <button type="button" class="tool-button" id="diffSwapButton" title="交换左右"><span class="icon-slot" data-icon="Replace"></span><span>交换</span></button>

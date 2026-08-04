@@ -760,7 +760,7 @@ const state = {
   replaceHistory: [] as string[],
   searchFavorites: [] as string[],
   showDirectory: false,
-  markdownEditMode: "wysiwyg" as MarkdownEditMode,
+  markdownEditMode: "source" as MarkdownEditMode,
   markdownContentWidth: "typora" as MarkdownContentWidth,
   darkMode: false,
   panel: "results" as "results" | "preview" | "logs",
@@ -835,11 +835,13 @@ type DiffSession = {
   ownsModified: boolean;
   renderSideBySide: boolean;
   ignoreWhitespace: boolean;
+  hideUnchanged: boolean;
   changeCount: number;
 };
 let diffSession: DiffSession | null = null;
 let diffPreferredSideBySide = true;
 let diffPreferredIgnoreWhitespace = false;
+let diffPreferredHideUnchanged = true;
 let sessionTimer = 0;
 let sessionWriteQueue: Promise<void> = Promise.resolve();
 let unsavedResolver: ((value: UnsavedChoice) => void) | null = null;
@@ -858,7 +860,7 @@ let pendingKeybindingChordTimer = 0;
 let recordingKeybindingCommandId = "";
 let recordingKeybindingStrokes: string[] = [];
 let recordingKeybindingTimer = 0;
-const collapsedKeybindingCategories = new Set<CommandCategory>(KEYBINDING_CATEGORY_ORDER.slice(1));
+const collapsedKeybindingCategories = new Set<CommandCategory>(["标签", "选择", "视图", "书签", "Markdown"]);
 let bookmarkDecorations: monaco.editor.IEditorDecorationsCollection | null = null;
 let tabMenuDocumentId = 0;
 let renderedTabsSignature = "";
@@ -1582,6 +1584,9 @@ function registerAppCommands() {
     command("editor.formatDocument", "格式化文档", "编辑", formatActiveDocument, {
       when: () => editorOnly() && isFormattingActionSupported(),
     }),
+    command("editor.minifyDocument", "压缩文档", "编辑", minifyActiveDocument, {
+      when: () => editorOnly() && isMinifyActionSupported(),
+    }),
     editorCommand("editor.selectNextOccurrence", "选中下一个同词", "editor.action.addSelectionToNextFindMatch", editorOnly),
     editorCommand("editor.selectAllOccurrences", "选中所有同词", "editor.action.selectHighlights", editorOnly),
     editorCommand("editor.addCursorAbove", "在上方添加光标", "editor.action.insertCursorAbove", editorOnly),
@@ -1620,6 +1625,18 @@ function registerAppCommands() {
       enabled: () => Boolean(diffSession),
     }),
     command("diff.toggleIgnoreWhitespace", "切换忽略空白差异", "查找", toggleDiffIgnoreWhitespace, {
+      allowInInput: true,
+      enabled: () => Boolean(diffSession),
+    }),
+    command("diff.toggleHideUnchanged", "切换折叠未变更区域", "查找", toggleDiffHideUnchanged, {
+      allowInInput: true,
+      enabled: () => Boolean(diffSession),
+    }),
+    command("diff.revertHunk", "还原当前变更块", "查找", revertCurrentDiffHunk, {
+      allowInInput: true,
+      enabled: () => Boolean(diffSession) && canEditDiffModified(),
+    }),
+    command("diff.copyHunk", "复制当前变更块", "查找", () => void copyCurrentDiffHunk(), {
       allowInInput: true,
       enabled: () => Boolean(diffSession),
     }),
@@ -1880,8 +1897,14 @@ function bindActions() {
   $("diffSwapButton").addEventListener("click", swapDiffSides);
   $("diffLayoutButton").addEventListener("click", toggleDiffLayout);
   $("diffIgnoreWhitespaceButton").addEventListener("click", toggleDiffIgnoreWhitespace);
+  $("diffHideUnchangedButton").addEventListener("click", toggleDiffHideUnchanged);
+  $("diffRevertHunkButton").addEventListener("click", revertCurrentDiffHunk);
+  $("diffCopyHunkButton").addEventListener("click", () => void copyCurrentDiffHunk());
   $("diffNextButton").addEventListener("click", () => navigateDiffChange("next"));
   $("diffPrevButton").addEventListener("click", () => navigateDiffChange("previous"));
+  $("currentFindSnippets").querySelectorAll<HTMLButtonElement>(".find-snippet").forEach((button) => {
+    button.addEventListener("click", () => applyFindSnippet(button.dataset.snippet ?? "", button.dataset.regex === "true"));
+  });
   $("editorQuickStart").querySelectorAll<HTMLButtonElement>("[data-quick-action]").forEach((button) => {
     button.addEventListener("click", () => void runQuickStartAction(button.dataset.quickAction ?? ""));
   });
@@ -5661,6 +5684,9 @@ function renderChrome() {
   $<HTMLButtonElement>("diffSwapButton").disabled = !diffSession;
   $<HTMLButtonElement>("diffLayoutButton").disabled = !diffSession;
   $<HTMLButtonElement>("diffIgnoreWhitespaceButton").disabled = !diffSession;
+  $<HTMLButtonElement>("diffHideUnchangedButton").disabled = !diffSession;
+  $<HTMLButtonElement>("diffRevertHunkButton").disabled = !diffSession || !canEditDiffModified();
+  $<HTMLButtonElement>("diffCopyHunkButton").disabled = !diffSession;
   $<HTMLButtonElement>("diffNextButton").disabled = !diffSession || (diffSession?.changeCount ?? 0) === 0;
   $<HTMLButtonElement>("diffPrevButton").disabled = !diffSession || (diffSession?.changeCount ?? 0) === 0;
   ["menuMarkdownWysiwygButton", "menuMarkdownSplitButton", "menuMarkdownSourceButton"].forEach((id) => {
@@ -7889,6 +7915,12 @@ function ensureDiffEditor() {
     enableSplitViewResizing: true,
     renderIndicators: true,
     ignoreTrimWhitespace: diffPreferredIgnoreWhitespace,
+    hideUnchangedRegions: {
+      enabled: diffPreferredHideUnchanged,
+      contextLineCount: 3,
+      minimumLineCount: 3,
+      revealLineCount: 20,
+    },
     minimap: { enabled: false },
     scrollbar: { verticalScrollbarSize: 10, horizontalScrollbarSize: 10 },
   });
@@ -7945,6 +7977,7 @@ function openDiffSession(options: {
     ownsModified,
     renderSideBySide: diffPreferredSideBySide,
     ignoreWhitespace: diffPreferredIgnoreWhitespace,
+    hideUnchanged: diffPreferredHideUnchanged,
     changeCount: 0,
   };
   instance.setModel({ original: originalModel, modified: modifiedModel });
@@ -7953,6 +7986,12 @@ function openDiffSession(options: {
     readOnly: options.modifiedReadOnly === true,
     renderSideBySide: diffSession.renderSideBySide,
     ignoreTrimWhitespace: diffSession.ignoreWhitespace,
+    hideUnchangedRegions: {
+      enabled: diffSession.hideUnchanged,
+      contextLineCount: 3,
+      minimumLineCount: 3,
+      revealLineCount: 20,
+    },
   });
   $("diffLeftLabel").textContent = options.leftLabel;
   $("diffRightLabel").textContent = options.rightLabel;
@@ -8010,6 +8049,7 @@ function swapDiffSides() {
     ownsModified: session.ownsOriginal,
     renderSideBySide: session.renderSideBySide,
     ignoreWhitespace: session.ignoreWhitespace,
+    hideUnchanged: session.hideUnchanged,
     changeCount: session.changeCount,
   };
   diffEditor.setModel({ original: nextOriginal, modified: nextModified });
@@ -8040,6 +8080,150 @@ function toggleDiffIgnoreWhitespace() {
   refreshDiffChangeCount();
   log(diffSession.ignoreWhitespace ? "已忽略空白差异" : "已保留空白差异");
   renderChrome();
+}
+
+function toggleDiffHideUnchanged() {
+  if (!diffSession || !diffEditor) return;
+  diffSession.hideUnchanged = !diffSession.hideUnchanged;
+  diffPreferredHideUnchanged = diffSession.hideUnchanged;
+  diffEditor.updateOptions({
+    hideUnchangedRegions: {
+      enabled: diffSession.hideUnchanged,
+      contextLineCount: 3,
+      minimumLineCount: 3,
+      revealLineCount: 20,
+    },
+  });
+  renderDiffToolbar();
+  requestEditorLayout();
+  log(diffSession.hideUnchanged ? "已折叠未变更区域" : "已展开全部区域");
+  renderChrome();
+}
+
+function canEditDiffModified() {
+  if (!diffSession || !diffEditor) return false;
+  return !diffEditor.getModifiedEditor().getOption(monaco.editor.EditorOption.readOnly);
+}
+
+function findDiffChangeAtModifiedLine(line: number) {
+  if (!diffEditor) return null;
+  const changes = diffEditor.getLineChanges() ?? [];
+  if (changes.length === 0) return null;
+  const exact = changes.find((change) => {
+    if (change.modifiedEndLineNumber === 0) {
+      return line === Math.max(1, change.modifiedStartLineNumber);
+    }
+    return line >= change.modifiedStartLineNumber && line <= change.modifiedEndLineNumber;
+  });
+  if (exact) return exact;
+  let nearest = changes[0];
+  let best = Number.POSITIVE_INFINITY;
+  for (const change of changes) {
+    const start = change.modifiedEndLineNumber === 0
+      ? Math.max(1, change.modifiedStartLineNumber)
+      : change.modifiedStartLineNumber;
+    const distance = Math.abs(start - line);
+    if (distance < best) {
+      best = distance;
+      nearest = change;
+    }
+  }
+  return nearest;
+}
+
+function getOriginalHunkText(change: monaco.editor.ILineChange) {
+  if (!diffSession || change.originalEndLineNumber === 0) return "";
+  const model = diffSession.originalModel;
+  const start = change.originalStartLineNumber;
+  const end = change.originalEndLineNumber;
+  let text = model.getValueInRange(new monaco.Range(start, 1, end, model.getLineMaxColumn(end)));
+  if (end < model.getLineCount()) text += model.getEOL();
+  return text;
+}
+
+function getModifiedHunkText(change: monaco.editor.ILineChange) {
+  if (!diffSession || change.modifiedEndLineNumber === 0) return "";
+  const model = diffSession.modifiedModel;
+  const start = change.modifiedStartLineNumber;
+  const end = change.modifiedEndLineNumber;
+  let text = model.getValueInRange(new monaco.Range(start, 1, end, model.getLineMaxColumn(end)));
+  if (end < model.getLineCount()) text += model.getEOL();
+  return text;
+}
+
+function modifiedRangeForChange(change: monaco.editor.ILineChange) {
+  if (!diffSession) return null;
+  const model = diffSession.modifiedModel;
+  if (change.modifiedEndLineNumber === 0) {
+    const afterLine = Math.max(0, change.modifiedStartLineNumber);
+    if (afterLine === 0) return new monaco.Range(1, 1, 1, 1);
+    if (afterLine >= model.getLineCount()) {
+      const line = model.getLineCount();
+      return new monaco.Range(line, model.getLineMaxColumn(line), line, model.getLineMaxColumn(line));
+    }
+    return new monaco.Range(afterLine + 1, 1, afterLine + 1, 1);
+  }
+  const start = change.modifiedStartLineNumber;
+  const end = change.modifiedEndLineNumber;
+  if (end < model.getLineCount()) {
+    return new monaco.Range(start, 1, end + 1, 1);
+  }
+  return new monaco.Range(start, 1, end, model.getLineMaxColumn(end));
+}
+
+function revertCurrentDiffHunk() {
+  if (!diffSession || !diffEditor || !canEditDiffModified()) {
+    log("当前对比右侧不可编辑，无法还原");
+    return;
+  }
+  const modifiedEditor = diffEditor.getModifiedEditor();
+  const position = modifiedEditor.getPosition();
+  if (!position) return;
+  const change = findDiffChangeAtModifiedLine(position.lineNumber);
+  if (!change) {
+    log("未找到当前变更块");
+    return;
+  }
+  const range = modifiedRangeForChange(change);
+  if (!range) return;
+  let text = getOriginalHunkText(change);
+  if (change.modifiedEndLineNumber === 0 && text && !text.endsWith(diffSession.modifiedModel.getEOL())) {
+    // inserting deleted content after a line: ensure newline prefix when needed
+    if (change.modifiedStartLineNumber > 0) text = diffSession.modifiedModel.getEOL() + text.replace(new RegExp(`${diffSession.modifiedModel.getEOL()}$`), "");
+  }
+  if (change.originalEndLineNumber === 0) text = "";
+  modifiedEditor.pushUndoStop();
+  modifiedEditor.executeEdits("diff-revert-hunk", [{ range, text, forceMoveMarkers: true }]);
+  modifiedEditor.pushUndoStop();
+  refreshDiffChangeCount();
+  log("已还原当前变更块为左侧内容");
+  renderChrome();
+}
+
+async function copyCurrentDiffHunk() {
+  if (!diffSession || !diffEditor) return;
+  const modifiedEditor = diffEditor.getModifiedEditor();
+  const position = modifiedEditor.getPosition() ?? diffEditor.getOriginalEditor().getPosition();
+  if (!position) return;
+  const change = findDiffChangeAtModifiedLine(position.lineNumber);
+  if (!change) {
+    log("未找到当前变更块");
+    return;
+  }
+  const modifiedText = getModifiedHunkText(change);
+  const originalText = getOriginalHunkText(change);
+  const payload = [
+    "----- 左侧（原始）-----",
+    originalText || "(空)",
+    "----- 右侧（修改）-----",
+    modifiedText || "(空)",
+  ].join(diffSession.modifiedModel.getEOL());
+  try {
+    await navigator.clipboard.writeText(payload);
+    log("已复制当前变更块");
+  } catch {
+    log("复制失败：浏览器剪贴板不可用");
+  }
 }
 
 function refreshDiffChangeCount() {
@@ -8087,6 +8271,18 @@ function renderDiffToolbar() {
     const label = ignoreButton.querySelector<HTMLElement>("[data-label]");
     if (label) label.textContent = ignore ? "忽略空白" : "空白";
   }
+  const hideButton = $<HTMLButtonElement>("diffHideUnchangedButton");
+  if (hideButton) {
+    const hide = Boolean(diffSession?.hideUnchanged);
+    hideButton.classList.toggle("state-on", hide);
+    hideButton.setAttribute("aria-pressed", String(hide));
+    hideButton.title = hide ? "展开全部区域" : "折叠未变更区域";
+    const label = hideButton.querySelector<HTMLElement>("[data-label]");
+    if (label) label.textContent = hide ? "折叠相同" : "显示全部";
+  }
+  const canEdit = canEditDiffModified();
+  $<HTMLButtonElement>("diffRevertHunkButton").disabled = !diffSession || !canEdit;
+  $<HTMLButtonElement>("diffCopyHunkButton").disabled = !diffSession;
   refreshDiffChangeCount();
 }
 
@@ -8153,6 +8349,54 @@ function renderEditorQuickStart() {
     && doc.model.getValueLength() === 0
     && state.documents.length === 1;
   panel.classList.toggle("hidden", !show);
+  if (!show) return;
+  const recentHost = $("editorQuickRecent");
+  const recentList = $("editorQuickRecentList");
+  const recentItems = [
+    ...state.recentWorkspaces.slice(0, 3).map((path) => ({ path, kind: "workspace" as const })),
+    ...state.recentFiles.slice(0, 6).map((path) => ({ path, kind: "file" as const })),
+  ].slice(0, 8);
+  if (recentItems.length === 0) {
+    recentHost.classList.add("hidden");
+    recentList.innerHTML = "";
+    return;
+  }
+  recentHost.classList.remove("hidden");
+  recentList.innerHTML = "";
+  for (const item of recentItems) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "editor-quick-recent-item";
+    button.innerHTML = `${iconSvg(item.kind === "workspace" ? "FolderTree" : "FileText")}<span><strong>${escapeHtml(fileNameFromPath(item.path))}</strong><small>${escapeHtml(item.path)}</small></span>`;
+    button.addEventListener("click", () => {
+      if (item.kind === "workspace") void openWorkspacePath(item.path);
+      else void openPath(item.path, true);
+    });
+    recentList.appendChild(button);
+  }
+}
+
+function applyFindSnippet(snippet: string, regex: boolean) {
+  const patterns: Record<string, string> = {
+    "trailing-space": "[ \\t]+$",
+    "multi-blank": "\\n{3,}",
+    todo: "TODO|FIXME",
+    number: "\\b\\d+(?:\\.\\d+)?\\b",
+    email: "[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}",
+  };
+  const value = patterns[snippet];
+  if (!value) return;
+  const input = $<HTMLInputElement>("currentFindInput");
+  input.value = value;
+  ($("currentRegexInput") as HTMLInputElement).checked = regex;
+  ($("currentExtendedInput") as HTMLInputElement).checked = false;
+  if (regex && (snippet === "todo" || snippet === "email")) {
+    ($("currentMatchCaseInput") as HTMLInputElement).checked = snippet === "todo" ? true : false;
+  }
+  syncCurrentFindControls();
+  scheduleCurrentFind();
+  input.focus();
+  input.select();
 }
 
 async function runQuickStartAction(action: string) {
@@ -8404,22 +8648,30 @@ function runEditorAction(actionId: string, successMessage?: string) {
 
 function isFormattingActionSupported(doc = activeDocument()) {
   if (!editor || isMarkdownWysiwygActive(doc)) return false;
-  if (doc.language === "json" || doc.language === "sql") return true;
+  if (doc.language === "json" || doc.language === "sql" || doc.language === "xml" || doc.language === "html") return true;
   return editor.getAction("editor.action.formatDocument")?.isSupported() ?? false;
+}
+
+function isMinifyActionSupported(doc = activeDocument()) {
+  if (!editor || isMarkdownWysiwygActive(doc) || doc.readOnly) return false;
+  return doc.language === "json" || doc.language === "xml" || doc.language === "html";
 }
 
 async function formatActiveDocument() {
   const doc = activeDocument();
-  if (doc.readOnly || isMarkdownWysiwygActive()) return;
+  if (doc.readOnly || isMarkdownWysiwygActive()) {
+    log(doc.readOnly ? "只读文档无法格式化" : "即时 Markdown 模式请先切到源码再格式化");
+    return;
+  }
   const action = editor.getAction("editor.action.formatDocument");
   if (!isFormattingActionSupported(doc)) {
-    log(`${languageLabel(doc.language)} 暂无可用格式化器`);
+    log(`${languageLabel(doc.language)} 暂无可用格式化器。可尝试切换语言或使用命令面板。`);
     return;
   }
 
   const before = doc.model.getValue();
   if (!before.trim()) {
-    log(`${languageLabel(doc.language)} 已是规范格式`);
+    log(`${languageLabel(doc.language)} 内容为空，无需格式化`);
     return;
   }
 
@@ -8439,9 +8691,14 @@ async function formatActiveDocument() {
         const formatted = JSON.stringify(JSON.parse(before), null, indentation);
         replaceModelText(doc.model, normalizeFormattedText(formatted, doc.model));
       } catch (error) {
-        log(`JSON 格式化失败：${error instanceof Error ? error.message : String(error)}`);
+        log(`JSON 格式化失败：${formatParseError(error)}。请先修正语法错误。`);
         return;
       }
+    } else if (doc.language === "xml" || doc.language === "html") {
+      const options = doc.model.getOptions();
+      const indent = options.insertSpaces ? " ".repeat(options.tabSize) : "\t";
+      const formatted = beautifyMarkup(before, indent, doc.language === "html");
+      replaceModelText(doc.model, normalizeFormattedText(formatted, doc.model));
     } else if (action?.isSupported()) {
       await action.run();
     } else {
@@ -8452,8 +8709,75 @@ async function formatActiveDocument() {
     const label = languageLabel(doc.language);
     log(doc.model.getValue() === before ? `${label} 已是规范格式` : `${label} 已格式化`);
   } catch (error) {
-    log(`${languageLabel(doc.language)} 格式化失败：${error instanceof Error ? error.message : String(error)}`);
+    log(`${languageLabel(doc.language)} 格式化失败：${formatParseError(error)}`);
   }
+}
+
+async function minifyActiveDocument() {
+  const doc = activeDocument();
+  if (!isMinifyActionSupported(doc)) {
+    log(`${languageLabel(doc.language)} 不支持压缩`);
+    return;
+  }
+  const before = doc.model.getValue();
+  if (!before.trim()) {
+    log("内容为空，无需压缩");
+    return;
+  }
+  try {
+    let next = before;
+    if (doc.language === "json") {
+      next = JSON.stringify(JSON.parse(before));
+    } else if (doc.language === "xml" || doc.language === "html") {
+      next = minifyMarkup(before);
+    }
+    replaceModelText(doc.model, normalizeFormattedText(next, doc.model));
+    editor.focus();
+    log(doc.model.getValue() === before ? "已是压缩格式" : `${languageLabel(doc.language)} 已压缩`);
+  } catch (error) {
+    log(`压缩失败：${formatParseError(error)}`);
+  }
+}
+
+function formatParseError(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function beautifyMarkup(source: string, indentUnit: string, isHtml: boolean) {
+  const normalized = source.replace(/\r\n?/g, "\n").trim();
+  if (!normalized) return "";
+  const tokens = normalized
+    .replace(/>\s+</g, "><")
+    .replace(/(>)(<)(\/*)/g, "$1\n$2$3")
+    .split("\n");
+  let depth = 0;
+  const voidLike = /^(area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)$/i;
+  const lines: string[] = [];
+  for (const raw of tokens) {
+    const line = raw.trim();
+    if (!line) continue;
+    const isClosing = /^<\//.test(line);
+    const isSelfClosing = /\/>$/.test(line) || (isHtml && /^<([a-z0-9-]+)[\s>]/i.test(line) && voidLike.test(RegExp.$1));
+    const isDoctype = /^<!/.test(line) || /^<\?/.test(line);
+    if (isClosing) depth = Math.max(0, depth - 1);
+    lines.push(`${indentUnit.repeat(depth)}${line}`);
+    if (!isClosing && !isSelfClosing && !isDoctype && /^<[a-zA-Z!?]/.test(line) && !/^<!--/.test(line)) {
+      depth += 1;
+    }
+    if (/-->$/.test(line) && depth > 0 && /^<!--/.test(line)) {
+      // keep depth for comment-only line
+    }
+  }
+  return lines.join("\n");
+}
+
+function minifyMarkup(source: string) {
+  return source
+    .replace(/\r\n?/g, "\n")
+    .replace(/\n+/g, " ")
+    .replace(/>\s+</g, "><")
+    .replace(/\s{2,}/g, " ")
+    .trim();
 }
 
 function normalizeFormattedText(text: string, model: monaco.editor.ITextModel) {
@@ -9048,7 +9372,7 @@ async function restoreSession() {
       ? snapshot.markdownEditMode
       : snapshot.markdownPreviewPreferenceSet
         ? snapshot.showMarkdownPreview ? "split" : "source"
-        : "wysiwyg";
+        : "source";
     state.markdownContentWidth = isMarkdownContentWidth(snapshot.markdownContentWidth)
       ? snapshot.markdownContentWidth
       : "typora";
