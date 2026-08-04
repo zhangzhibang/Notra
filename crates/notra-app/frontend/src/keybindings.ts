@@ -160,6 +160,7 @@ export const NOTRA_KEYMAP: KeybindingMap = {
   "diff.nextChange": ["F7", "Alt+F5"],
   "diff.previousChange": ["Shift+F7", "Shift+Alt+F5"],
   "editor.minifyDocument": ["Shift+Alt+M"],
+  "toolbox.open": ["Ctrl+Shift+Alt+T"],
   "navigation.goToLine": ["Ctrl+G"],
   "navigation.quickOpen": ["Ctrl+P"],
   "navigation.commandPalette": ["Ctrl+Shift+P", "F1"],

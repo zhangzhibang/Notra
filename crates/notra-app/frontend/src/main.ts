@@ -94,6 +94,7 @@ import {
   Undo2,
   Trash2,
   WrapText,
+  Wrench,
   X,
   ZoomIn,
   ZoomOut,
@@ -118,6 +119,18 @@ import {
   type KeybindingOverrides,
   type KeymapProfile,
 } from "./keybindings";
+import {
+  TOOLBOX_CATEGORY_LABELS,
+  TOOLBOX_ITEMS,
+  getToolboxItem,
+  listToolboxItems,
+  runToolboxItem,
+  type ToolboxCategoryId,
+  type ToolboxContext,
+  type ToolboxItem,
+  type ToolboxItemId,
+  type ToolboxScope,
+} from "./toolbox";
 import * as monaco from "monaco-editor/esm/vs/editor/editor.api";
 import editorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
 import jsonWorker from "monaco-editor/esm/vs/language/json/json.worker?worker";
@@ -873,6 +886,12 @@ const pendingSqlFormats = new globalThis.Map<number, {
   reject: (error: Error) => void;
 }>();
 let treeMenuTarget: TreeContextTarget | null = null;
+let toolboxCategory: ToolboxCategoryId = "json";
+let toolboxSelectedId: ToolboxItemId | null = "json-pretty";
+let toolboxScope: ToolboxScope = "selection";
+let toolboxPreviewTimer = 0;
+let toolboxLastPreviewText = "";
+let toolboxLastReplace = true;
 let busyDepth = 0;
 let editorBusyDepth = 0;
 let openRequestTask: Promise<void> = Promise.resolve();
@@ -1038,6 +1057,7 @@ const lucideIcons: Record<string, IconNode> = {
   Undo2,
   Trash2,
   WrapText,
+  Wrench,
   X,
   ZoomIn,
   ZoomOut,
@@ -1587,6 +1607,7 @@ function registerAppCommands() {
     command("editor.minifyDocument", "压缩文档", "编辑", minifyActiveDocument, {
       when: () => editorOnly() && isMinifyActionSupported(),
     }),
+    command("toolbox.open", "打开工具箱", "编辑", openToolboxPage, { allowInInput: true }),
     editorCommand("editor.selectNextOccurrence", "选中下一个同词", "editor.action.addSelectionToNextFindMatch", editorOnly),
     editorCommand("editor.selectAllOccurrences", "选中所有同词", "editor.action.selectHighlights", editorOnly),
     editorCommand("editor.addCursorAbove", "在上方添加光标", "editor.action.insertCursorAbove", editorOnly),
@@ -1862,6 +1883,24 @@ function bindActions() {
   $("uppercaseButton").addEventListener("click", transformToUppercase);
   $("lowercaseButton").addEventListener("click", transformToLowercase);
   $("formatDocumentButton").addEventListener("click", () => void formatActiveDocument());
+  $("toolboxButton").addEventListener("click", openToolboxPage);
+  $("toolboxCloseButton").addEventListener("click", closeToolboxPage);
+  $("toolboxPreviewButton").addEventListener("click", () => void previewSelectedToolboxItem());
+  $("toolboxApplyButton").addEventListener("click", () => void applySelectedToolboxItem());
+  $("toolboxCopyButton").addEventListener("click", () => void copyToolboxPreview());
+  document.querySelectorAll<HTMLButtonElement>("[data-toolbox-scope]").forEach((button) => {
+    button.addEventListener("click", () => {
+      toolboxScope = (button.dataset.toolboxScope as ToolboxScope) || "selection";
+      renderToolboxScope();
+      void previewSelectedToolboxItem();
+    });
+  });
+  ["toolboxPrefixInput", "toolboxSuffixInput", "toolboxDelimiterInput", "toolboxColumnInput"].forEach((id) => {
+    $(id).addEventListener("input", () => {
+      window.clearTimeout(toolboxPreviewTimer);
+      toolboxPreviewTimer = window.setTimeout(() => void previewSelectedToolboxItem(), 180);
+    });
+  });
   $("tabs").addEventListener("mousedown", (event) => {
     if (event.button === 0 && event.target === event.currentTarget) event.preventDefault();
   });
@@ -2211,6 +2250,10 @@ function bindActions() {
         closeSettingsPage();
         return;
       }
+      if (!$("toolboxPage").classList.contains("hidden")) {
+        closeToolboxPage();
+        return;
+      }
       if (!$("findPopover").classList.contains("hidden")) {
         closeFind();
         return;
@@ -2265,6 +2308,7 @@ function bindAppMenus() {
   bindMenuAction("menuUppercaseButton", transformToUppercase);
   bindMenuAction("menuLowercaseButton", transformToLowercase);
   bindMenuAction("menuFormatDocumentButton", () => void formatActiveDocument());
+  bindMenuAction("menuToolboxButton", openToolboxPage);
   bindMenuAction("menuSelectAllButton", selectAllEditor);
   bindMenuAction("menuFindButton", () => {
     setFindView("find");
@@ -2585,6 +2629,7 @@ function bindCustomFontInput(id: string, target: "shell" | "editor") {
 
 function openSettingsPage() {
   closeMenus();
+  closeToolboxPage();
   $("commandPalette").classList.add("hidden");
   $("settingsPage").classList.remove("hidden");
   $("app").classList.add("settings-open");
@@ -2597,6 +2642,240 @@ function closeSettingsPage() {
   $("settingsPage").classList.add("hidden");
   $("app").classList.remove("settings-open");
   $("settingsButton").classList.remove("active");
+}
+
+function openToolboxPage() {
+  closeMenus();
+  closeSettingsPage();
+  $("commandPalette").classList.add("hidden");
+  $("toolboxPage").classList.remove("hidden");
+  $("app").classList.add("toolbox-open");
+  $("toolboxButton").classList.add("active");
+  renderIconSlots($("toolboxPage"));
+  renderToolboxPage();
+  void previewSelectedToolboxItem();
+}
+
+function closeToolboxPage() {
+  $("toolboxPage").classList.add("hidden");
+  $("app").classList.remove("toolbox-open");
+  $("toolboxButton").classList.remove("active");
+}
+
+function renderToolboxPage() {
+  const nav = $("toolboxNav");
+  nav.innerHTML = "";
+  (Object.keys(TOOLBOX_CATEGORY_LABELS) as ToolboxCategoryId[]).forEach((category) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `toolbox-nav-item${category === toolboxCategory ? " active" : ""}`;
+    button.innerHTML = `<strong>${TOOLBOX_CATEGORY_LABELS[category]}</strong><span>${listToolboxItems(category).length} 项</span>`;
+    button.addEventListener("click", () => {
+      toolboxCategory = category;
+      const first = listToolboxItems(category)[0];
+      toolboxSelectedId = first?.id ?? null;
+      renderToolboxPage();
+      void previewSelectedToolboxItem();
+    });
+    nav.appendChild(button);
+  });
+
+  $("toolboxCategoryTitle").textContent = TOOLBOX_CATEGORY_LABELS[toolboxCategory];
+  $("toolboxCategoryDesc").textContent = toolboxCategory === "json"
+    ? "JSON 美化、压缩、排序键、字符串转义"
+    : toolboxCategory === "recipes"
+      ? "一键组合多个工具，适合日常收拾文本"
+      : "选择工具后可先预览，再应用到选区或整文件";
+
+  const list = $("toolboxList");
+  list.innerHTML = "";
+  for (const item of listToolboxItems(toolboxCategory)) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `toolbox-item${item.id === toolboxSelectedId ? " active" : ""}${item.featured ? " featured" : ""}${item.destructive ? " destructive" : ""}`;
+    button.innerHTML = `<strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.description)}</span>`;
+    button.addEventListener("click", () => {
+      toolboxSelectedId = item.id;
+      renderToolboxPage();
+      void previewSelectedToolboxItem();
+    });
+    list.appendChild(button);
+  }
+  renderToolboxScope();
+  renderToolboxParams();
+}
+
+function renderToolboxScope() {
+  document.querySelectorAll<HTMLButtonElement>("[data-toolbox-scope]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.toolboxScope === toolboxScope);
+  });
+}
+
+function renderToolboxParams() {
+  const item = toolboxSelectedId ? getToolboxItem(toolboxSelectedId) : undefined;
+  const needs = item?.needsInput;
+  $("toolboxParams").classList.toggle("hidden", !needs);
+  $("toolboxPrefixField").classList.toggle("hidden", needs !== "prefix");
+  $("toolboxSuffixField").classList.toggle("hidden", needs !== "suffix");
+  $("toolboxDelimiterField").classList.toggle("hidden", needs !== "delimiter");
+  $("toolboxColumnField").classList.toggle("hidden", needs !== "column");
+}
+
+function getToolboxSourceText(): string {
+  const doc = activeDocument();
+  if (isMarkdownWysiwygActive(doc)) syncMarkdownModelFromEditor(doc);
+  if (toolboxScope === "file") return doc.model.getValue();
+  const selection = editor.getSelection();
+  if (!selection || selection.isEmpty()) return doc.model.getValue();
+  return doc.model.getValueInRange(selection);
+}
+
+function buildToolboxContext(): ToolboxContext {
+  const doc = activeDocument();
+  const options = doc.model.getOptions();
+  return {
+    language: doc.language,
+    lineEnding: (doc.lineEnding as "LF" | "CRLF" | "CR") || "LF",
+    tabSize: options.tabSize,
+    insertSpaces: options.insertSpaces,
+    prefix: ($("toolboxPrefixInput") as HTMLInputElement).value,
+    suffix: ($("toolboxSuffixInput") as HTMLInputElement).value,
+    delimiter: ($("toolboxDelimiterInput") as HTMLInputElement).value || undefined,
+    columnIndex: Number(($("toolboxColumnInput") as HTMLInputElement).value || "1"),
+  };
+}
+
+async function executeToolboxItem(item: ToolboxItem, input: string) {
+  if (item.action === "compare-disk") {
+    closeToolboxPage();
+    await compareActiveWithDisk();
+    return { ok: true as const, text: input, replace: false, message: "已打开磁盘对比" };
+  }
+  if (item.action === "compare-files") {
+    closeToolboxPage();
+    await compareTwoFiles();
+    return { ok: true as const, text: input, replace: false, message: "已打开文件对比" };
+  }
+  if (item.action === "compare-tabs") {
+    closeToolboxPage();
+    openCompareOpenTabMenu();
+    return { ok: true as const, text: input, replace: false, message: "请选择要对比的标签" };
+  }
+
+  if (item.recipeSteps?.length) {
+    let text = input;
+    for (const step of item.recipeSteps) {
+      if (step === "sql-format") {
+        const options = activeDocument().model.getOptions();
+        text = await formatSqlInWorker(text, options.tabSize, !options.insertSpaces);
+        continue;
+      }
+      const stepResult = runToolboxItem(step, text, buildToolboxContext());
+      if (!stepResult.ok) return stepResult;
+      if (stepResult.replace === false) return stepResult;
+      text = stepResult.text;
+    }
+    return { ok: true as const, text, message: `配方完成：${item.title}` };
+  }
+
+  if (item.asyncKind === "sql-format" || item.id === "sql-format") {
+    const options = activeDocument().model.getOptions();
+    const text = await formatSqlInWorker(input, options.tabSize, !options.insertSpaces);
+    return { ok: true as const, text, message: "SQL 已格式化" };
+  }
+
+  return runToolboxItem(item.id, input, buildToolboxContext());
+}
+
+async function previewSelectedToolboxItem() {
+  const item = toolboxSelectedId ? getToolboxItem(toolboxSelectedId) : undefined;
+  if (!item) {
+    $("toolboxPreviewMeta").textContent = "选择一个工具";
+    ($("toolboxPreview") as HTMLTextAreaElement).value = "";
+    return;
+  }
+  renderToolboxParams();
+  const input = getToolboxSourceText();
+  try {
+    const result = await executeToolboxItem(item, input);
+    if (!result.ok) {
+      toolboxLastPreviewText = "";
+      toolboxLastReplace = true;
+      $("toolboxPreviewMeta").textContent = `失败：${result.error}`;
+      ($("toolboxPreview") as HTMLTextAreaElement).value = result.error;
+      return;
+    }
+    toolboxLastPreviewText = result.text;
+    toolboxLastReplace = result.replace !== false;
+    $("toolboxPreviewMeta").textContent = result.message
+      || (toolboxLastReplace
+        ? `预览 · ${toolboxScope === "selection" ? "选区/无选区则全文" : "当前文件"} · ${result.text.length} 字符`
+        : result.message || "统计结果（不会写回）");
+    ($("toolboxPreview") as HTMLTextAreaElement).value = result.text;
+  } catch (error) {
+    toolboxLastPreviewText = "";
+    $("toolboxPreviewMeta").textContent = `失败：${error instanceof Error ? error.message : String(error)}`;
+    ($("toolboxPreview") as HTMLTextAreaElement).value = String(error);
+  }
+}
+
+async function applySelectedToolboxItem() {
+  const item = toolboxSelectedId ? getToolboxItem(toolboxSelectedId) : undefined;
+  if (!item) return;
+  if (item.action) {
+    await executeToolboxItem(item, getToolboxSourceText());
+    return;
+  }
+  const doc = activeDocument();
+  if (doc.readOnly || isMarkdownWysiwygActive(doc)) {
+    log(doc.readOnly ? "只读文档无法应用工具箱" : "请先切换到源码模式");
+    return;
+  }
+  await previewSelectedToolboxItem();
+  if (!toolboxLastReplace) {
+    log(toolboxLastPreviewText ? "统计类工具仅预览，不写回编辑器" : "没有可应用的预览");
+    return;
+  }
+  if (!toolboxLastPreviewText && toolboxLastPreviewText !== "") {
+    log("请先生成有效预览");
+    return;
+  }
+  const source = getToolboxSourceText();
+  if (source === toolboxLastPreviewText) {
+    log("内容无变化");
+    return;
+  }
+  if (toolboxScope === "file" || !editor.getSelection() || editor.getSelection()?.isEmpty()) {
+    replaceModelText(doc.model, toolboxLastPreviewText);
+  } else {
+    const selection = editor.getSelection();
+    if (!selection) return;
+    editor.pushUndoStop();
+    editor.executeEdits("toolbox-apply", [{
+      range: selection,
+      text: toolboxLastPreviewText,
+      forceMoveMarkers: true,
+    }]);
+    editor.pushUndoStop();
+  }
+  editor.focus();
+  closeToolboxPage();
+  log(`工具箱已应用：${item.title}`);
+  renderChrome();
+}
+
+async function copyToolboxPreview() {
+  const text = ($("toolboxPreview") as HTMLTextAreaElement).value;
+  if (!text) {
+    log("预览为空");
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    log("已复制工具箱预览");
+  } catch {
+    log("复制失败");
+  }
 }
 
 function selectSettingsSection(section: SettingsSection) {
@@ -5748,6 +6027,7 @@ function commandElementIds(): Record<string, string> {
   uppercaseButton: "edit.uppercase",
   lowercaseButton: "edit.lowercase",
   formatDocumentButton: "editor.formatDocument",
+  toolboxButton: "toolbox.open",
   findButton: "search.find",
   replaceButton: "search.replace",
   workspaceFindToolButton: "search.workspaceFind",
@@ -8412,6 +8692,9 @@ async function runQuickStartAction(action: string) {
       return;
     case "format":
       await formatActiveDocument();
+      return;
+    case "toolbox":
+      openToolboxPage();
       return;
     case "compare-files":
       await compareTwoFiles();

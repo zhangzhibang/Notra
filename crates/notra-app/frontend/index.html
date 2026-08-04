@@ -134,6 +134,7 @@
           <button class="tool-button" id="uppercaseButton" aria-label="转为大写" title="转为大写"><span class="icon-slot" data-icon="CaseUpper"></span><span data-label>转为大写</span></button>
           <button class="tool-button" id="lowercaseButton" aria-label="转为小写" title="转为小写"><span class="icon-slot" data-icon="CaseLower"></span><span data-label>转为小写</span></button>
           <button class="tool-button" id="formatDocumentButton" aria-label="格式化文档 Shift+Alt+F" title="格式化文档 Shift+Alt+F" aria-keyshortcuts="Shift+Alt+F"><span class="icon-slot" data-icon="Braces"></span><span data-label>格式化文档</span></button>
+          <button class="tool-button" id="toolboxButton" aria-label="工具箱" title="工具箱"><span class="icon-slot" data-icon="Wrench"></span><span data-label>工具箱</span></button>
           <span class="tool-divider"></span>
           <button class="tool-button" id="findButton" aria-label="查找 Ctrl+F" title="查找 Ctrl+F" aria-keyshortcuts="Control+F"><span class="icon-slot" data-icon="Search"></span><span data-label>查找</span></button>
           <button class="tool-button" id="replaceButton" aria-label="替换 Ctrl+H" title="替换 Ctrl+H" aria-keyshortcuts="Control+H"><span class="icon-slot" data-icon="Replace"></span><span data-label>替换</span></button>
@@ -192,6 +193,7 @@
           <button class="menu-row" id="menuUppercaseButton" role="menuitem"><span class="icon-slot" data-icon="CaseUpper"></span><strong>转为大写</strong><small></small></button>
           <button class="menu-row" id="menuLowercaseButton" role="menuitem"><span class="icon-slot" data-icon="CaseLower"></span><strong>转为小写</strong><small></small></button>
           <button class="menu-row" id="menuFormatDocumentButton" role="menuitem"><span class="icon-slot" data-icon="Braces"></span><strong>格式化文档</strong><small>Shift+Alt+F</small></button>
+          <button class="menu-row" id="menuToolboxButton" role="menuitem"><span class="icon-slot" data-icon="Wrench"></span><strong>工具箱</strong><small></small></button>
           <div class="menu-divider"></div>
           <button class="menu-row" id="menuSelectAllButton" role="menuitem"><span class="icon-slot" data-icon="Check"></span><strong>全选</strong><small>Ctrl+A</small></button>
         </div>
@@ -315,6 +317,7 @@
                 <button type="button" class="tool-button" data-quick-action="open-folder"><span class="icon-slot" data-icon="FolderTree"></span><span>打开工作区</span></button>
                 <button type="button" class="tool-button" data-quick-action="find"><span class="icon-slot" data-icon="Search"></span><span>查找</span></button>
                 <button type="button" class="tool-button" data-quick-action="format"><span class="icon-slot" data-icon="Braces"></span><span>格式化</span></button>
+                <button type="button" class="tool-button" data-quick-action="toolbox"><span class="icon-slot" data-icon="Wrench"></span><span>工具箱</span></button>
                 <button type="button" class="tool-button" data-quick-action="compare-files"><span class="icon-slot" data-icon="Columns2"></span><span>对比文件</span></button>
                 <button type="button" class="tool-button" data-quick-action="commands"><span class="icon-slot" data-icon="Command"></span><span>命令面板</span></button>
               </div>
@@ -413,6 +416,63 @@
           <span>转换当前文档行尾</span>
         </header>
         <div class="menu-list" id="lineEndingList"></div>
+      </section>
+
+      <section class="toolbox-page hidden" id="toolboxPage" aria-label="工具箱">
+        <aside class="toolbox-sidebar">
+          <header class="toolbox-sidebar-head">
+            <strong>工具箱</strong>
+            <button class="settings-close" id="toolboxCloseButton" aria-label="关闭工具箱" title="关闭工具箱">
+              <span class="icon-slot" data-icon="X"></span>
+            </button>
+          </header>
+          <nav class="toolbox-nav" id="toolboxNav" aria-label="工具分类"></nav>
+        </aside>
+        <div class="toolbox-main">
+          <header class="toolbox-main-head">
+            <div>
+              <strong id="toolboxCategoryTitle">常用配方</strong>
+              <span id="toolboxCategoryDesc">把常用文本操作收成一键配方</span>
+            </div>
+            <div class="toolbox-scope" role="group" aria-label="作用范围">
+              <button type="button" class="seg active" data-toolbox-scope="selection">选区</button>
+              <button type="button" class="seg" data-toolbox-scope="file">当前文件</button>
+            </div>
+          </header>
+          <div class="toolbox-body">
+            <div class="toolbox-list" id="toolboxList"></div>
+            <section class="toolbox-preview-pane" aria-label="工具预览">
+              <header>
+                <strong>预览</strong>
+                <span id="toolboxPreviewMeta">选择一个工具</span>
+              </header>
+              <div class="toolbox-params hidden" id="toolboxParams">
+                <label class="toolbox-param" id="toolboxPrefixField">
+                  <span>前缀</span>
+                  <input id="toolboxPrefixInput" type="text" placeholder="例如 // " />
+                </label>
+                <label class="toolbox-param" id="toolboxSuffixField">
+                  <span>后缀</span>
+                  <input id="toolboxSuffixInput" type="text" placeholder="例如 ;" />
+                </label>
+                <label class="toolbox-param" id="toolboxDelimiterField">
+                  <span>分隔符</span>
+                  <input id="toolboxDelimiterInput" type="text" placeholder="默认 ," />
+                </label>
+                <label class="toolbox-param" id="toolboxColumnField">
+                  <span>列号</span>
+                  <input id="toolboxColumnInput" type="number" min="1" value="1" />
+                </label>
+              </div>
+              <textarea id="toolboxPreview" readonly spellcheck="false" placeholder="预览结果会显示在这里"></textarea>
+              <div class="toolbox-actions">
+                <button type="button" class="tool-button" id="toolboxPreviewButton"><span class="icon-slot" data-icon="Search"></span><span>生成预览</span></button>
+                <button type="button" class="tool-button primary" id="toolboxApplyButton"><span class="icon-slot" data-icon="Check"></span><span>应用到编辑器</span></button>
+                <button type="button" class="tool-button" id="toolboxCopyButton"><span class="icon-slot" data-icon="Copy"></span><span>复制预览</span></button>
+              </div>
+            </section>
+          </div>
+        </div>
       </section>
 
       <section class="settings-page hidden" id="settingsPage" aria-label="设置">
