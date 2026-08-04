@@ -184,6 +184,7 @@ export const TOOLBOX_ITEMS: ToolboxItem[] = [
     category: "recipes",
     title: "日志缩水",
     description: "去行尾空白 → 去重行 → 压缩空行",
+    destructive: true,
     recipeSteps: ["trim-trailing", "dedupe-lines", "collapse-blank-lines"],
   },
   {
@@ -209,7 +210,7 @@ export const TOOLBOX_ITEMS: ToolboxItem[] = [
 
   // cleanup
   { id: "trim-trailing", category: "cleanup", title: "删除行尾空白", description: "去掉每行末尾空格/Tab" },
-  { id: "delete-empty-lines", category: "cleanup", title: "删除空行", description: "去掉仅空白的行" },
+  { id: "delete-empty-lines", category: "cleanup", title: "删除空行", description: "去掉仅空白的行", destructive: true },
   { id: "collapse-blank-lines", category: "cleanup", title: "压缩连续空行", description: "多个空行压成一个" },
   { id: "dedupe-lines", category: "cleanup", title: "删除重复行", description: "保留首次出现", destructive: true },
   { id: "strip-bom", category: "cleanup", title: "去除 BOM", description: "去掉开头 UTF-8 BOM" },
@@ -224,17 +225,17 @@ export const TOOLBOX_ITEMS: ToolboxItem[] = [
   { id: "prefix-lines", category: "transform", title: "每行加前缀", description: "需要输入前缀", needsInput: "prefix" },
   { id: "suffix-lines", category: "transform", title: "每行加后缀", description: "需要输入后缀", needsInput: "suffix" },
   { id: "number-lines", category: "transform", title: "每行加序号", description: "1. 2. 3. …" },
-  { id: "sort-asc", category: "transform", title: "按行升序", description: "字典序排序" },
-  { id: "sort-desc", category: "transform", title: "按行降序", description: "字典序倒序" },
-  { id: "join-lines", category: "transform", title: "多行合并一行", description: "换行变分隔符", needsInput: "delimiter" },
+  { id: "sort-asc", category: "transform", title: "按行升序", description: "字典序排序", destructive: true },
+  { id: "sort-desc", category: "transform", title: "按行降序", description: "字典序倒序", destructive: true },
+  { id: "join-lines", category: "transform", title: "多行合并一行", description: "换行变分隔符", needsInput: "delimiter", destructive: true },
   { id: "split-delim-to-lines", category: "transform", title: "分隔符拆成多行", description: "按分隔符断行", needsInput: "delimiter" },
 
-  // structure
+  // structure（XML/HTML 为启发式缩进，复杂文档可能不完美）
   { id: "sql-format", category: "structure", title: "SQL 格式化", description: "美化 SQL", asyncKind: "sql-format" },
-  { id: "xml-pretty", category: "structure", title: "XML 美化", description: "缩进 XML" },
-  { id: "xml-minify", category: "structure", title: "XML 压缩", description: "去掉多余空白" },
-  { id: "html-pretty", category: "structure", title: "HTML 美化", description: "缩进 HTML" },
-  { id: "html-minify", category: "structure", title: "HTML 压缩", description: "去掉多余空白" },
+  { id: "xml-pretty", category: "structure", title: "XML 美化", description: "启发式缩进（非完整解析器）" },
+  { id: "xml-minify", category: "structure", title: "XML 压缩", description: "去掉标签间多余空白" },
+  { id: "html-pretty", category: "structure", title: "HTML 美化", description: "启发式缩进（非完整解析器）" },
+  { id: "html-minify", category: "structure", title: "HTML 压缩", description: "去掉标签间多余空白" },
 
   // encoding
   { id: "url-encode", category: "encoding", title: "URL 编码", description: "encodeURIComponent" },
@@ -266,12 +267,55 @@ export const TOOLBOX_ITEMS: ToolboxItem[] = [
   { id: "compare-tabs", category: "compare", title: "与打开标签对比", description: "打开 Diff", action: "compare-tabs" },
 ];
 
+/** 查找命中模式下允许的逐段变换（配方/结构体/统计/对比等一律禁用） */
+export const TOOLBOX_MATCHES_ALLOWED_IDS = new Set<string>([
+  "upper",
+  "lower",
+  "title-case",
+  "prefix-lines",
+  "suffix-lines",
+  "trim-trailing",
+  "strip-bom",
+  "json-escape",
+  "json-unescape",
+  "json-pretty",
+  "json-minify",
+  "url-encode",
+  "url-decode",
+  "base64-encode",
+  "base64-decode",
+  "unicode-escape",
+  "unicode-unescape",
+  "slash-forward",
+  "slash-back",
+  "html-encode",
+  "html-decode",
+]);
+
 export function getToolboxItem(id: string): ToolboxItem | undefined {
   return TOOLBOX_ITEMS.find((item) => item.id === id);
 }
 
 export function listToolboxItems(category: ToolboxCategoryId): ToolboxItem[] {
   return TOOLBOX_ITEMS.filter((item) => item.category === category);
+}
+
+export function toolboxSupportsMatches(item: ToolboxItem | undefined): boolean {
+  if (!item) return false;
+  if (item.action || item.recipeSteps?.length || item.asyncKind) return false;
+  if (item.category === "stats" || item.category === "compare") return false;
+  return TOOLBOX_MATCHES_ALLOWED_IDS.has(item.id);
+}
+
+export function toolboxMatchesBlockReason(item: ToolboxItem | undefined): string | null {
+  if (!item) return "未选择工具";
+  if (toolboxSupportsMatches(item)) return null;
+  if (item.action) return "对比类请从 Diff 入口打开，不能按查找命中执行";
+  if (item.recipeSteps?.length) return "配方仅支持选区/全文，请切换作用范围";
+  if (item.asyncKind || item.category === "structure") return "结构化工具请对选区或全文使用";
+  if (item.category === "stats") return "统计类仅预览，且不支持按命中逐段执行";
+  if (item.category === "compare") return "请使用 Diff 入口";
+  return "该工具不适合按查找命中逐段执行，请改用选区或全文";
 }
 
 export function runToolboxItem(id: ToolboxItemId, input: string, ctx: ToolboxContext = {}): ToolboxResult {
@@ -415,11 +459,17 @@ export function runToolboxTool(id: ToolboxToolId, input: string, ctx: ToolboxCon
         return ok(parsed, "已解析 JSON 字符串");
       }
       case "xml-pretty":
-        return ok(beautifyMarkup(input, indentUnit(ctx), false));
+        return ok(
+          beautifyMarkup(input, indentUnit(ctx), false),
+          "XML 已启发式缩进（复杂文档请人工复核）",
+        );
       case "xml-minify":
         return ok(minifyMarkup(input));
       case "html-pretty":
-        return ok(beautifyMarkup(input, indentUnit(ctx), true));
+        return ok(
+          beautifyMarkup(input, indentUnit(ctx), true),
+          "HTML 已启发式缩进（含 script/复杂属性时请人工复核）",
+        );
       case "html-minify":
         return ok(minifyMarkup(input));
       case "url-encode":
@@ -598,16 +648,31 @@ function jsonArrayToCsv(input: string, delimiter: string): string {
   const data = JSON.parse(input);
   if (!Array.isArray(data)) throw new Error("根节点必须是 JSON 数组");
   if (data.length === 0) return "";
-  if (data.every((item) => item === null || typeof item !== "object")) {
+  if (data.every((item) => item === null || typeof item !== "object" || Array.isArray(item))) {
     return data.map((item) => csvQuote(item === null || item === undefined ? "" : String(item))).join("\n");
   }
-  const keys = new Set<string>();
-  for (const row of data) {
-    if (row && typeof row === "object" && !Array.isArray(row)) {
-      Object.keys(row as Record<string, unknown>).forEach((key) => keys.add(key));
+  // 表头：首个对象 key 顺序优先，其余 key 按字典序追加（稳定可复现）
+  const header: string[] = [];
+  const seen = new Set<string>();
+  const firstObject = data.find((item) => item && typeof item === "object" && !Array.isArray(item)) as
+    | Record<string, unknown>
+    | undefined;
+  if (firstObject) {
+    for (const key of Object.keys(firstObject)) {
+      seen.add(key);
+      header.push(key);
     }
   }
-  const header = [...keys];
+  const extras = new Set<string>();
+  for (const row of data) {
+    if (!row || typeof row !== "object" || Array.isArray(row)) continue;
+    for (const key of Object.keys(row as Record<string, unknown>)) {
+      if (!seen.has(key)) extras.add(key);
+    }
+  }
+  for (const key of [...extras].sort((a, b) => a.localeCompare(b))) {
+    header.push(key);
+  }
   if (header.length === 0) throw new Error("数组元素不是对象，无法推导 CSV 表头");
   const lines = [header.map(csvQuote).join(delimiter)];
   for (const row of data) {

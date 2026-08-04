@@ -5973,8 +5973,15 @@ body.dark .toolbox-sidebar {
   border-color: color-mix(in srgb, #ef4444 30%, transparent);
 }
 
+.toolbox-item.disabled,
+.toolbox-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
 .toolbox-item.active,
-.toolbox-item:hover {
+.toolbox-item:hover:not(:disabled):not(.disabled) {
   border-color: color-mix(in srgb, var(--accent, #2563eb) 50%, transparent);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent, #2563eb) 18%, transparent);
 }

@@ -125,6 +125,8 @@ import {
   getToolboxItem,
   listToolboxItems,
   runToolboxItem,
+  toolboxMatchesBlockReason,
+  toolboxSupportsMatches,
   type ToolboxCategoryId,
   type ToolboxContext,
   type ToolboxItem,
@@ -1891,7 +1893,15 @@ function bindActions() {
   document.querySelectorAll<HTMLButtonElement>("[data-toolbox-scope]").forEach((button) => {
     button.addEventListener("click", () => {
       toolboxScope = (button.dataset.toolboxScope as ToolboxScope) || "selection";
-      renderToolboxScope();
+      // 切到命中模式时重绘列表，灰掉不兼容工具
+      if (toolboxSelectedId) {
+        const selected = getToolboxItem(toolboxSelectedId);
+        if (toolboxScope === "matches" && selected && !toolboxSupportsMatches(selected)) {
+          toolboxSelectedId = listToolboxItems(toolboxCategory).find((item) => toolboxSupportsMatches(item))?.id
+            ?? null;
+        }
+      }
+      renderToolboxPage();
       void previewSelectedToolboxItem();
     });
   });
@@ -2702,14 +2712,20 @@ function renderToolboxPage() {
   for (const item of listToolboxItems(toolboxCategory)) {
     const button = document.createElement("button");
     button.type = "button";
-    button.className = `toolbox-item${item.id === toolboxSelectedId ? " active" : ""}${item.featured ? " featured" : ""}${item.destructive ? " destructive" : ""}`;
-    button.innerHTML = `<strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.description)}</span>`;
+    const matchesBlocked = toolboxScope === "matches" && !toolboxSupportsMatches(item);
+    button.className = `toolbox-item${item.id === toolboxSelectedId ? " active" : ""}${item.featured ? " featured" : ""}${item.destructive ? " destructive" : ""}${matchesBlocked ? " disabled" : ""}`;
+    button.disabled = matchesBlocked;
+    const blockReason = matchesBlocked ? toolboxMatchesBlockReason(item) : null;
+    button.title = blockReason || item.description;
+    button.innerHTML = `<strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(matchesBlocked ? `命中模式不可用 · ${item.description}` : item.description)}</span>`;
     button.addEventListener("click", () => {
+      if (matchesBlocked) return;
       toolboxSelectedId = item.id;
       renderToolboxPage();
       void previewSelectedToolboxItem();
     });
     button.addEventListener("dblclick", () => {
+      if (matchesBlocked) return;
       toolboxSelectedId = item.id;
       void applySelectedToolboxItem();
     });
@@ -2750,15 +2766,46 @@ function getToolboxSourceText(): string {
   return doc.model.getValueInRange(selection);
 }
 
-function getCurrentDocumentSearchMatches(): TextMatchDto[] {
-  if (!state.results || state.results.total === 0) return [];
-  if ((state.searchScope ?? "current") !== "current") return [];
+function getCurrentDocumentSearchMatches() {
+  // 命中批量只针对「当前文件」查找；优先用编辑器实时 findMatches，避免 path/title 对齐漂移
+  if ((state.searchScope ?? "current") !== "current") return [] as ReturnType<typeof modelMatches>;
+  const query = ($("findInput") as HTMLInputElement).value;
+  if (!query) return [] as ReturnType<typeof modelMatches>;
   const doc = activeDocument();
-  const key = doc.path || doc.title;
+  if (!isMarkdownWysiwygActive(doc)) {
+    try {
+      const live = modelMatches(doc);
+      if (live.length > 0) return live;
+    } catch {
+      // fall through to result list
+    }
+  }
+  if (!state.results || state.results.total === 0) return [] as ReturnType<typeof modelMatches>;
+  const key = normalizePathKey(doc.path || doc.title);
+  const titleKey = normalizePathKey(doc.title);
   return flattenSearchResults()
-    .filter((item) => item.path === key || item.fileName === doc.title || item.path === doc.title)
+    .filter((item) => {
+      const pathKey = normalizePathKey(item.path);
+      const nameKey = normalizePathKey(item.fileName);
+      return pathKey === key || pathKey === titleKey || nameKey === titleKey || nameKey === key;
+    })
     .map((item) => item.match)
     .sort((a, b) => a.start - b.start);
+}
+
+function normalizePathKey(value: string | null | undefined) {
+  return (value || "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+}
+
+function toolboxSelectionIsEmpty() {
+  const selection = editor.getSelection();
+  return !selection || selection.isEmpty();
+}
+
+function toolboxAppliesToFullDocument() {
+  if (toolboxScope === "file") return true;
+  if (toolboxScope === "matches") return false;
+  return toolboxSelectionIsEmpty();
 }
 
 function buildToolboxContext(): ToolboxContext {
@@ -2828,16 +2875,21 @@ async function previewSelectedToolboxItem() {
   }
   renderToolboxParams();
   if (toolboxScope === "matches") {
+    const blocked = toolboxMatchesBlockReason(item);
+    if (blocked) {
+      toolboxLastPreviewText = "";
+      toolboxLastReplace = false;
+      $("toolboxPreviewMeta").textContent = blocked;
+      ($("toolboxPreview") as HTMLTextAreaElement).value = "";
+      return;
+    }
     const matches = getCurrentDocumentSearchMatches();
     if (matches.length === 0) {
       toolboxLastPreviewText = "";
       toolboxLastReplace = false;
-      $("toolboxPreviewMeta").textContent = "当前文件没有查找命中（请先 Ctrl+F 查找）";
+      $("toolboxPreviewMeta").textContent = "当前文件没有查找命中（请先在当前文件中查找）";
       ($("toolboxPreview") as HTMLTextAreaElement).value = "";
       return;
-    }
-    if (item.action || item.id.startsWith("recipe-") || item.asyncKind === "sql-format" || item.id.includes("json-diff") || item.id.startsWith("stats-") || item.id === "json-validate") {
-      // still allow preview for simple transforms on joined matches below for most tools
     }
     try {
       const rows: string[] = [];
@@ -2886,9 +2938,14 @@ async function previewSelectedToolboxItem() {
     }
     toolboxLastPreviewText = result.text;
     toolboxLastReplace = result.replace !== false;
+    const scopeLabel = toolboxScope === "file"
+      ? "当前文件"
+      : toolboxSelectionIsEmpty()
+        ? "无选区 → 将作用于全文"
+        : "当前选区";
     $("toolboxPreviewMeta").textContent = result.message
       || (toolboxLastReplace
-        ? `预览 · ${toolboxScope === "selection" ? "选区/无选区则全文" : "当前文件"} · ${result.text.length} 字符`
+        ? `预览 · ${scopeLabel} · ${result.text.length} 字符`
         : result.message || "统计结果（不会写回）");
     ($("toolboxPreview") as HTMLTextAreaElement).value = result.text;
   } catch (error) {
@@ -2912,15 +2969,25 @@ async function applySelectedToolboxItem() {
   }
 
   if (toolboxScope === "matches") {
+    const blocked = toolboxMatchesBlockReason(item);
+    if (blocked) {
+      log(blocked);
+      return;
+    }
     const matches = getCurrentDocumentSearchMatches();
     if (matches.length === 0) {
       log("当前文件没有查找命中");
       return;
     }
-    if (item.id.startsWith("stats-") || item.id === "json-validate" || item.id === "json-diff") {
-      await previewSelectedToolboxItem();
-      log("该工具仅预览，不会写回命中");
-      return;
+    if (item.destructive || matches.length >= 20) {
+      const confirmed = await askConfirm({
+        title: item.destructive ? "确认批量修改查找命中" : "确认应用到查找命中",
+        subtitle: item.title,
+        body: `将修改当前文件中的 ${matches.length} 处查找命中。此操作可撤销。`,
+        danger: !!item.destructive,
+        okLabel: "应用",
+      });
+      if (!confirmed) return;
     }
     const edits: monaco.editor.IIdentifiedSingleEditOperation[] = [];
     let changed = 0;
@@ -2969,7 +3036,31 @@ async function applySelectedToolboxItem() {
     log("内容无变化");
     return;
   }
-  if (toolboxScope === "file" || !editor.getSelection() || editor.getSelection()?.isEmpty()) {
+
+  const fullDocument = toolboxAppliesToFullDocument();
+  if (toolboxScope === "selection" && toolboxSelectionIsEmpty()) {
+    const confirmed = await askConfirm({
+      title: "无选区，将应用到全文？",
+      subtitle: item.title,
+      body: "当前作用范围为「选区」，但没有选中文本。继续将修改整个文件。此操作可撤销。",
+      danger: !!item.destructive,
+      okLabel: "应用到全文",
+    });
+    if (!confirmed) return;
+  } else if (item.destructive || (fullDocument && (item.destructive || item.id.startsWith("recipe-")))) {
+    const confirmed = await askConfirm({
+      title: item.destructive ? "确认执行破坏性变换" : "确认应用到全文",
+      subtitle: item.title,
+      body: fullDocument
+        ? `「${item.title}」将修改整个文件。此操作可撤销。`
+        : `「${item.title}」将修改当前选区。此操作可撤销。`,
+      danger: !!item.destructive,
+      okLabel: "应用",
+    });
+    if (!confirmed) return;
+  }
+
+  if (fullDocument) {
     replaceModelText(doc.model, toolboxLastPreviewText);
   } else {
     const selection = editor.getSelection();
@@ -8925,6 +9016,23 @@ function buildReplacedLinePreview(match: TextMatchDto, replacement: string) {
 }
 
 async function runBatchEditAction(action: string) {
+  const needsFullDocConfirm = ["sort-asc", "sort-desc", "delete-empty"].includes(action)
+    && toolboxSelectionIsEmptyLike();
+  if (needsFullDocConfirm) {
+    const labels: Record<string, string> = {
+      "sort-asc": "按升序排列行",
+      "sort-desc": "按降序排列行",
+      "delete-empty": "删除空行",
+    };
+    const confirmed = await askConfirm({
+      title: "无选区，将作用于全文？",
+      subtitle: labels[action] || action,
+      body: "当前没有选中行。继续将修改整个文件。此操作可撤销。",
+      danger: true,
+      okLabel: "继续",
+    });
+    if (!confirmed) return;
+  }
   switch (action) {
     case "prefix-lines":
       await transformSelectedLines("prefix");
@@ -8953,6 +9061,12 @@ async function runBatchEditAction(action: string) {
     default:
       return;
   }
+}
+
+function toolboxSelectionIsEmptyLike() {
+  if (!editor) return true;
+  const selection = editor.getSelection();
+  return !selection || selection.isEmpty();
 }
 
 async function transformSelectedLines(mode: "prefix" | "suffix") {
@@ -9105,7 +9219,14 @@ async function formatActiveDocument() {
       const options = doc.model.getOptions();
       const indent = options.insertSpaces ? " ".repeat(options.tabSize) : "\t";
       const formatted = beautifyMarkup(before, indent, doc.language === "html");
+      if (!formatted.trim()) {
+        log(`${languageLabel(doc.language)} 格式化结果为空，已取消写回`);
+        return;
+      }
       replaceModelText(doc.model, normalizeFormattedText(formatted, doc.model));
+      log(`${languageLabel(doc.language)} 已启发式格式化（复杂标签/脚本请人工复核）`);
+      editor.focus();
+      return;
     } else if (action?.isSupported()) {
       await action.run();
     } else {

@@ -70,6 +70,32 @@ check("json array to csv", () => {
   assert.equal(result.text, '"id","name"\n"1","a"\n"2","b"');
 });
 
+check("json array to csv stable headers", () => {
+  const result = toolbox.runToolboxItem(
+    "json-array-to-csv",
+    '[{"name":"a","id":1},{"id":2,"name":"b","extra":3}]',
+  );
+  assert.equal(result.ok, true);
+  // first object key order preserved, extra keys sorted after
+  assert.equal(result.text, '"name","id","extra"\n"a","1",\n"b","2","3"');
+});
+
+check("matches whitelist", () => {
+  const upper = toolbox.getToolboxItem("upper");
+  const recipe = toolbox.getToolboxItem("recipe-json-pretty");
+  const diff = toolbox.getToolboxItem("json-diff");
+  assert.equal(toolbox.toolboxSupportsMatches(upper), true);
+  assert.equal(toolbox.toolboxSupportsMatches(recipe), false);
+  assert.equal(toolbox.toolboxSupportsMatches(diff), false);
+  assert.ok(toolbox.toolboxMatchesBlockReason(recipe));
+});
+
+check("destructive flags", () => {
+  assert.equal(toolbox.getToolboxItem("dedupe-lines")?.destructive, true);
+  assert.equal(toolbox.getToolboxItem("sort-asc")?.destructive, true);
+  assert.equal(toolbox.getToolboxItem("delete-empty-lines")?.destructive, true);
+});
+
 check("json csv to array", () => {
   const result = toolbox.runToolboxItem("json-csv-to-array", "id,name\n1,a\n2,b", { delimiter: "," });
   assert.equal(result.ok, true);
