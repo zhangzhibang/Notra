@@ -9,7 +9,7 @@ export type ToolboxCategoryId =
   | "stats"
   | "compare";
 
-export type ToolboxScope = "selection" | "file";
+export type ToolboxScope = "selection" | "file" | "matches";
 
 export type ToolboxToolId =
   | "trim-trailing"
@@ -36,6 +36,9 @@ export type ToolboxToolId =
   | "json-validate"
   | "json-flatten"
   | "json-get-path"
+  | "json-array-to-csv"
+  | "json-csv-to-array"
+  | "json-diff"
   | "json-escape"
   | "json-unescape"
   | "sql-format"
@@ -71,6 +74,7 @@ export type ToolboxRecipeId =
   | "recipe-json-pretty"
   | "recipe-json-minify"
   | "recipe-json-sort"
+  | "recipe-json-array-csv"
   | "recipe-config-publish"
   | "recipe-log-shrink"
   | "recipe-encode-rescue";
@@ -161,6 +165,14 @@ export const TOOLBOX_ITEMS: ToolboxItem[] = [
     recipeSteps: ["json-sort-keys"],
   },
   {
+    id: "recipe-json-array-csv",
+    category: "recipes",
+    title: "JSON 数组 → CSV",
+    description: "对象数组导出为 CSV 文本",
+    featured: true,
+    recipeSteps: ["json-array-to-csv"],
+  },
+  {
     id: "recipe-config-publish",
     category: "recipes",
     title: "配置发布前",
@@ -189,6 +201,9 @@ export const TOOLBOX_ITEMS: ToolboxItem[] = [
   { id: "json-validate", category: "json", title: "JSON 校验", description: "只检查是否合法，不改文本", featured: true },
   { id: "json-flatten", category: "json", title: "JSON 扁平化", description: "嵌套对象 → a.b=c 行文本", featured: true },
   { id: "json-get-path", category: "json", title: "按路径取值", description: "如 data.items.0.name", featured: true, needsInput: "path" },
+  { id: "json-array-to-csv", category: "json", title: "数组 → CSV", description: "对象数组导出 CSV", featured: true },
+  { id: "json-csv-to-array", category: "json", title: "CSV → 数组", description: "CSV 转 JSON 对象数组", featured: true },
+  { id: "json-diff", category: "json", title: "JSON 结构对比", description: "两段 JSON 用 --- 分隔", featured: true },
   { id: "json-escape", category: "json", title: "转成 JSON 字符串", description: "文本 → \"...\" 转义", featured: true },
   { id: "json-unescape", category: "json", title: "解析 JSON 字符串", description: "\"...\" → 文本", featured: true },
 
@@ -366,6 +381,31 @@ export function runToolboxTool(id: ToolboxToolId, input: string, ctx: ToolboxCon
         if (value === undefined) return { ok: false, error: `路径不存在：${path}` };
         if (typeof value === "string") return ok(value, `已取值：${path}`);
         return ok(JSON.stringify(value, null, indentUnit(ctx)), `已取值：${path}`);
+      }
+      case "json-array-to-csv":
+        return ok(jsonArrayToCsv(input, ctx.delimiter ?? ","), "已转换为 CSV");
+      case "json-csv-to-array":
+        return ok(
+          JSON.stringify(csvToJsonArray(input, ctx.delimiter ?? detectDelimiter(input)), null, indentUnit(ctx)),
+          "已转换为 JSON 数组",
+        );
+      case "json-diff": {
+        const parts = splitJsonDiffParts(input);
+        if (!parts) {
+          return {
+            ok: false,
+            error: "请用单独一行 --- 分隔两段 JSON（左侧/右侧）",
+          };
+        }
+        const left = JSON.parse(parts.left);
+        const right = JSON.parse(parts.right);
+        const lines = diffJsonValues(left, right);
+        return {
+          ok: true,
+          text: lines.length ? lines.join("\n") : "两边 JSON 结构与值完全一致",
+          replace: false,
+          message: lines.length ? `发现 ${lines.length} 处差异（仅预览）` : "无差异",
+        };
       }
       case "json-escape":
         return ok(JSON.stringify(input), "已转为 JSON 字符串");
@@ -546,6 +586,102 @@ function getJsonPath(value: unknown, path: string): unknown {
     return undefined;
   }
   return current;
+}
+
+function splitJsonDiffParts(input: string): { left: string; right: string } | null {
+  const match = toLf(input).match(/^([\s\S]*?)\n---\n([\s\S]*)$/);
+  if (!match) return null;
+  return { left: match[1].trim(), right: match[2].trim() };
+}
+
+function jsonArrayToCsv(input: string, delimiter: string): string {
+  const data = JSON.parse(input);
+  if (!Array.isArray(data)) throw new Error("根节点必须是 JSON 数组");
+  if (data.length === 0) return "";
+  if (data.every((item) => item === null || typeof item !== "object")) {
+    return data.map((item) => csvQuote(item === null || item === undefined ? "" : String(item))).join("\n");
+  }
+  const keys = new Set<string>();
+  for (const row of data) {
+    if (row && typeof row === "object" && !Array.isArray(row)) {
+      Object.keys(row as Record<string, unknown>).forEach((key) => keys.add(key));
+    }
+  }
+  const header = [...keys];
+  if (header.length === 0) throw new Error("数组元素不是对象，无法推导 CSV 表头");
+  const lines = [header.map(csvQuote).join(delimiter)];
+  for (const row of data) {
+    const record = row && typeof row === "object" && !Array.isArray(row)
+      ? row as Record<string, unknown>
+      : {};
+    lines.push(header.map((key) => {
+      const value = record[key];
+      if (value === null || value === undefined) return "";
+      if (typeof value === "object") return csvQuote(JSON.stringify(value));
+      return csvQuote(String(value));
+    }).join(delimiter));
+  }
+  return lines.join("\n");
+}
+
+function csvToJsonArray(input: string, delimiter: string): Record<string, string>[] {
+  const lines = splitLines(input).filter((line) => line.length > 0);
+  if (lines.length === 0) return [];
+  const headers = splitCsvLine(lines[0], delimiter).map((header) => csvUnquote(header).trim() || "field");
+  return lines.slice(1).map((line) => {
+    const cols = splitCsvLine(line, delimiter);
+    const row: Record<string, string> = {};
+    headers.forEach((header, index) => {
+      row[header] = csvUnquote(cols[index] ?? "");
+    });
+    return row;
+  });
+}
+
+function diffJsonValues(left: unknown, right: unknown, path = "$"): string[] {
+  if (Object.is(left, right)) return [];
+  const leftType = jsonType(left);
+  const rightType = jsonType(right);
+  if (leftType !== rightType) {
+    return [`~ ${path}: ${leftType} -> ${rightType} (${previewJson(left)} => ${previewJson(right)})`];
+  }
+  if (leftType !== "object" && leftType !== "array") {
+    return [`~ ${path}: ${previewJson(left)} => ${previewJson(right)}`];
+  }
+  if (Array.isArray(left) && Array.isArray(right)) {
+    const lines: string[] = [];
+    const max = Math.max(left.length, right.length);
+    for (let i = 0; i < max; i += 1) {
+      const child = `${path}[${i}]`;
+      if (i >= left.length) lines.push(`+ ${child}: ${previewJson(right[i])}`);
+      else if (i >= right.length) lines.push(`- ${child}: ${previewJson(left[i])}`);
+      else lines.push(...diffJsonValues(left[i], right[i], child));
+    }
+    return lines;
+  }
+  const leftObj = left as Record<string, unknown>;
+  const rightObj = right as Record<string, unknown>;
+  const keys = new Set([...Object.keys(leftObj), ...Object.keys(rightObj)]);
+  const lines: string[] = [];
+  for (const key of [...keys].sort((a, b) => a.localeCompare(b))) {
+    const child = `${path}.${key}`;
+    if (!(key in leftObj)) lines.push(`+ ${child}: ${previewJson(rightObj[key])}`);
+    else if (!(key in rightObj)) lines.push(`- ${child}: ${previewJson(leftObj[key])}`);
+    else lines.push(...diffJsonValues(leftObj[key], rightObj[key], child));
+  }
+  return lines;
+}
+
+function jsonType(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  return typeof value;
+}
+
+function previewJson(value: unknown): string {
+  const text = JSON.stringify(value);
+  if (text == null) return "undefined";
+  return text.length > 80 ? `${text.slice(0, 77)}...` : text;
 }
 
 function utf8ToBase64(text: string): string {

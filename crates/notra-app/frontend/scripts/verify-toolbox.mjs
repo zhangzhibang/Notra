@@ -64,6 +64,26 @@ check("csv extract column", () => {
   assert.equal(result.text, "b\n2");
 });
 
+check("json array to csv", () => {
+  const result = toolbox.runToolboxItem("json-array-to-csv", '[{"id":1,"name":"a"},{"id":2,"name":"b"}]');
+  assert.equal(result.ok, true);
+  assert.equal(result.text, '"id","name"\n"1","a"\n"2","b"');
+});
+
+check("json csv to array", () => {
+  const result = toolbox.runToolboxItem("json-csv-to-array", "id,name\n1,a\n2,b", { delimiter: "," });
+  assert.equal(result.ok, true);
+  assert.equal(result.text, '[\n  {\n    "id": "1",\n    "name": "a"\n  },\n  {\n    "id": "2",\n    "name": "b"\n  }\n]');
+});
+
+check("json diff", () => {
+  const result = toolbox.runToolboxItem("json-diff", '{\"a\":1}\n---\n{\"a\":2,\"b\":3}');
+  assert.equal(result.ok, true);
+  assert.equal(result.replace, false);
+  assert.match(result.text, /\$\.a/);
+  assert.match(result.text, /\$\.b/);
+});
+
 if (failures.length) {
   console.error(failures.join("\n"));
   process.exitCode = 1;

@@ -2692,10 +2692,10 @@ function renderToolboxPage() {
 
   $("toolboxCategoryTitle").textContent = TOOLBOX_CATEGORY_LABELS[toolboxCategory];
   $("toolboxCategoryDesc").textContent = toolboxCategory === "json"
-    ? "JSON 美化、压缩、排序键、字符串转义"
+    ? "JSON 美化/压缩/排序/扁平化/路径取值/数组CSV/结构对比"
     : toolboxCategory === "recipes"
       ? "一键组合多个工具，适合日常收拾文本"
-      : "选择工具后可先预览，再应用到选区或整文件";
+      : "支持选区、整文件，或对当前查找命中逐条处理";
 
   const list = $("toolboxList");
   list.innerHTML = "";
@@ -2739,10 +2739,26 @@ function renderToolboxParams() {
 function getToolboxSourceText(): string {
   const doc = activeDocument();
   if (isMarkdownWysiwygActive(doc)) syncMarkdownModelFromEditor(doc);
+  if (toolboxScope === "matches") {
+    const matches = getCurrentDocumentSearchMatches();
+    if (matches.length === 0) return "";
+    return matches.map((match) => match.matchedText).join("\n");
+  }
   if (toolboxScope === "file") return doc.model.getValue();
   const selection = editor.getSelection();
   if (!selection || selection.isEmpty()) return doc.model.getValue();
   return doc.model.getValueInRange(selection);
+}
+
+function getCurrentDocumentSearchMatches(): TextMatchDto[] {
+  if (!state.results || state.results.total === 0) return [];
+  if ((state.searchScope ?? "current") !== "current") return [];
+  const doc = activeDocument();
+  const key = doc.path || doc.title;
+  return flattenSearchResults()
+    .filter((item) => item.path === key || item.fileName === doc.title || item.path === doc.title)
+    .map((item) => item.match)
+    .sort((a, b) => a.start - b.start);
 }
 
 function buildToolboxContext(): ToolboxContext {
@@ -2811,6 +2827,53 @@ async function previewSelectedToolboxItem() {
     return;
   }
   renderToolboxParams();
+  if (toolboxScope === "matches") {
+    const matches = getCurrentDocumentSearchMatches();
+    if (matches.length === 0) {
+      toolboxLastPreviewText = "";
+      toolboxLastReplace = false;
+      $("toolboxPreviewMeta").textContent = "当前文件没有查找命中（请先 Ctrl+F 查找）";
+      ($("toolboxPreview") as HTMLTextAreaElement).value = "";
+      return;
+    }
+    if (item.action || item.id.startsWith("recipe-") || item.asyncKind === "sql-format" || item.id.includes("json-diff") || item.id.startsWith("stats-") || item.id === "json-validate") {
+      // still allow preview for simple transforms on joined matches below for most tools
+    }
+    try {
+      const rows: string[] = [];
+      let changed = 0;
+      for (const match of matches.slice(0, 200)) {
+        const result = await executeToolboxItem(item, match.matchedText);
+        if (!result.ok) {
+          toolboxLastPreviewText = "";
+          toolboxLastReplace = false;
+          $("toolboxPreviewMeta").textContent = `失败：${result.error}`;
+          ($("toolboxPreview") as HTMLTextAreaElement).value = result.error;
+          return;
+        }
+        if (result.replace === false) {
+          toolboxLastPreviewText = result.text;
+          toolboxLastReplace = false;
+          $("toolboxPreviewMeta").textContent = result.message || "仅预览";
+          ($("toolboxPreview") as HTMLTextAreaElement).value = result.text;
+          return;
+        }
+        if (result.text !== match.matchedText) changed += 1;
+        rows.push(`${match.matchedText}  →  ${result.text}`);
+      }
+      toolboxLastPreviewText = rows.join("\n");
+      toolboxLastReplace = true;
+      const more = matches.length > 200 ? `（预览前 200 / 共 ${matches.length}）` : "";
+      $("toolboxPreviewMeta").textContent = `查找命中 ${matches.length} 处 · 将变化 ${changed} 处${more}`;
+      ($("toolboxPreview") as HTMLTextAreaElement).value = toolboxLastPreviewText;
+      return;
+    } catch (error) {
+      toolboxLastPreviewText = "";
+      $("toolboxPreviewMeta").textContent = `失败：${error instanceof Error ? error.message : String(error)}`;
+      ($("toolboxPreview") as HTMLTextAreaElement).value = String(error);
+      return;
+    }
+  }
   const input = getToolboxSourceText();
   try {
     const result = await executeToolboxItem(item, input);
@@ -2847,6 +2910,55 @@ async function applySelectedToolboxItem() {
     log(doc.readOnly ? "只读文档无法应用工具箱" : "请先切换到源码模式");
     return;
   }
+
+  if (toolboxScope === "matches") {
+    const matches = getCurrentDocumentSearchMatches();
+    if (matches.length === 0) {
+      log("当前文件没有查找命中");
+      return;
+    }
+    if (item.id.startsWith("stats-") || item.id === "json-validate" || item.id === "json-diff") {
+      await previewSelectedToolboxItem();
+      log("该工具仅预览，不会写回命中");
+      return;
+    }
+    const edits: monaco.editor.IIdentifiedSingleEditOperation[] = [];
+    let changed = 0;
+    for (const match of [...matches].sort((a, b) => b.start - a.start)) {
+      const result = await executeToolboxItem(item, match.matchedText);
+      if (!result.ok) {
+        log(`应用失败：${result.error}`);
+        return;
+      }
+      if (result.replace === false) {
+        log(result.message || "该工具不会写回命中");
+        return;
+      }
+      if (result.text === match.matchedText) continue;
+      const start = doc.model.getPositionAt(match.start);
+      const end = doc.model.getPositionAt(match.end);
+      edits.push({
+        range: new monaco.Range(start.lineNumber, start.column, end.lineNumber, end.column),
+        text: result.text,
+        forceMoveMarkers: true,
+      });
+      changed += 1;
+    }
+    if (edits.length === 0) {
+      log("命中内容无变化");
+      return;
+    }
+    editor.pushUndoStop();
+    editor.executeEdits("toolbox-apply-matches", edits);
+    editor.pushUndoStop();
+    editor.focus();
+    closeToolboxPage();
+    log(`工具箱已应用到 ${changed} 处查找命中：${item.title}`);
+    findCurrent(false, false);
+    renderChrome();
+    return;
+  }
+
   await previewSelectedToolboxItem();
   if (!toolboxLastReplace) {
     log("该工具仅预览/统计，不会写回编辑器");
