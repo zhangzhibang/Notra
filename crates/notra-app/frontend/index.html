@@ -139,6 +139,7 @@
           <button class="tool-button" id="replaceButton" aria-label="替换 Ctrl+H" title="替换 Ctrl+H" aria-keyshortcuts="Control+H"><span class="icon-slot" data-icon="Replace"></span><span data-label>替换</span></button>
           <button class="tool-button" id="workspaceFindToolButton" aria-label="在文件中查找" title="在文件中查找"><span class="icon-slot" data-icon="FileSearch"></span><span data-label>文件查找</span></button>
           <button class="tool-button" id="batchEditButton" data-menu-trigger aria-label="批量改行" title="批量改行" aria-haspopup="menu" aria-controls="batchEditMenu" aria-expanded="false"><span class="icon-slot" data-icon="ListTree"></span><span data-label>批量改行</span></button>
+          <button class="tool-button" id="compareDiskButton" aria-label="与磁盘版本对比" title="与磁盘版本对比"><span class="icon-slot" data-icon="Columns2"></span><span data-label>对比磁盘</span></button>
           <button class="tool-button" id="goToLineButton" aria-label="跳转到行 Ctrl+G" title="跳转到行 Ctrl+G" aria-keyshortcuts="Control+G"><span class="icon-slot" data-icon="ListRestart"></span><span data-label>跳转到行</span></button>
           <button class="tool-button" id="commandButton" aria-label="命令面板 Ctrl+P" title="命令面板 Ctrl+P" aria-keyshortcuts="Control+P"><span class="icon-slot" data-icon="Command"></span><span data-label>命令面板</span></button>
           <span class="tool-divider"></span>
@@ -202,6 +203,10 @@
           <button class="menu-row" id="menuFindWorkspaceButton" role="menuitem"><span class="icon-slot" data-icon="Files"></span><strong>在文件中查找</strong><small>Ctrl+Shift+F</small></button>
           <button class="menu-row" id="menuReplaceWorkspaceButton" role="menuitem"><span class="icon-slot" data-icon="ReplaceAll"></span><strong>在文件中替换</strong><small>Ctrl+Shift+H</small></button>
           <button class="menu-row" id="menuGoToLineButton" role="menuitem"><span class="icon-slot" data-icon="ListRestart"></span><strong>跳转到行</strong><small>Ctrl+G</small></button>
+          <div class="menu-divider"></div>
+          <button class="menu-row" id="menuCompareDiskButton" role="menuitem"><span class="icon-slot" data-icon="Columns2"></span><strong>与磁盘版本对比</strong><small></small></button>
+          <button class="menu-row" id="menuCompareFilesButton" role="menuitem"><span class="icon-slot" data-icon="Files"></span><strong>对比两个文件…</strong><small></small></button>
+          <button class="menu-row" id="menuCloseDiffButton" role="menuitem"><span class="icon-slot" data-icon="X"></span><strong>关闭对比</strong><small>Esc</small></button>
           <div class="menu-divider"></div>
           <button class="menu-row" id="menuCommandButton" role="menuitem"><span class="icon-slot" data-icon="Command"></span><strong>命令面板</strong><small>Ctrl+P</small></button>
         </div>
@@ -293,6 +298,20 @@
               <div class="current-find-history-menu hidden" id="currentFindHistoryMenu" role="listbox" aria-label="搜索历史"></div>
             </div>
             <div id="editor"></div>
+            <div class="diff-host hidden" id="diffHost" aria-label="文件对比">
+              <header class="diff-toolbar">
+                <div class="diff-titles">
+                  <strong id="diffLeftLabel">原始</strong>
+                  <span class="diff-arrow" aria-hidden="true">→</span>
+                  <strong id="diffRightLabel">修改</strong>
+                </div>
+                <div class="diff-actions">
+                  <button type="button" class="tool-button" id="diffSwapButton" title="交换左右"><span class="icon-slot" data-icon="Columns2"></span><span>交换</span></button>
+                  <button type="button" class="tool-button" id="diffCloseButton" title="关闭对比 Esc"><span class="icon-slot" data-icon="X"></span><span>关闭</span></button>
+                </div>
+              </header>
+              <div id="diffEditor" class="diff-editor"></div>
+            </div>
             <div id="markdownWysiwyg" class="markdown-wysiwyg" aria-label="Markdown 即时编辑器" aria-hidden="true"></div>
           </div>
           <div class="markdown-preview-resize hidden" id="markdownPreviewResize" role="separator" aria-label="调整 Markdown 预览宽度" aria-orientation="vertical" aria-valuemin="280" tabindex="0" title="拖动调整预览宽度，双击恢复默认"></div>
@@ -804,6 +823,8 @@
       <section class="popover tree-menu hidden" id="treeMenu" role="menu" aria-label="文件树菜单">
         <div class="menu-list">
           <button class="menu-row" id="treeOpenButton" role="menuitem"><span class="icon-slot" data-icon="FileText"></span><strong>打开</strong><small></small></button>
+          <button class="menu-row" id="treeCompareActiveButton" role="menuitem"><span class="icon-slot" data-icon="Columns2"></span><strong>与当前文件对比</strong><small></small></button>
+          <button class="menu-row" id="treeComparePickButton" role="menuitem"><span class="icon-slot" data-icon="Files"></span><strong>与…对比</strong><small></small></button>
           <div class="menu-divider"></div>
           <button class="menu-row" id="treeNewFileButton" role="menuitem"><span class="icon-slot" data-icon="FilePlus2"></span><strong>新建文件</strong><small></small></button>
           <button class="menu-row" id="treeNewFolderButton" role="menuitem"><span class="icon-slot" data-icon="FolderPlus"></span><strong>新建文件夹</strong><small></small></button>

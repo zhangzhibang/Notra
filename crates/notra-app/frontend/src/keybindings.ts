@@ -150,6 +150,8 @@ export const NOTRA_KEYMAP: KeybindingMap = {
   "search.previous": ["Shift+F3"],
   "search.workspaceFind": ["Ctrl+Shift+F"],
   "search.workspaceReplace": ["Ctrl+Shift+H"],
+  "diff.compareWithDisk": ["Ctrl+Shift+Alt+D"],
+  "diff.compareFiles": ["Ctrl+Shift+Alt+C"],
   "navigation.goToLine": ["Ctrl+G"],
   "navigation.quickOpen": ["Ctrl+P"],
   "navigation.commandPalette": ["Ctrl+Shift+P", "F1"],

@@ -825,6 +825,17 @@ const state = {
 
 let nextId = 1;
 let editor: monaco.editor.IStandaloneCodeEditor;
+let diffEditor: monaco.editor.IStandaloneDiffEditor | null = null;
+type DiffSession = {
+  leftLabel: string;
+  rightLabel: string;
+  originalModel: monaco.editor.ITextModel;
+  modifiedModel: monaco.editor.ITextModel;
+  ownsOriginal: boolean;
+  ownsModified: boolean;
+  renderSideBySide: boolean;
+};
+let diffSession: DiffSession | null = null;
 let sessionTimer = 0;
 let sessionWriteQueue: Promise<void> = Promise.resolve();
 let unsavedResolver: ((value: UnsavedChoice) => void) | null = null;
@@ -1591,6 +1602,15 @@ function registerAppCommands() {
     command("search.workspaceReplace", "在文件中替换", "查找", () => openWorkspaceFind("workspace-replace"), { allowInInput: true, enabled: () => Boolean(state.workspace) }),
     command("search.findAllCurrent", "查找当前文件全部结果", "查找", () => findCurrent(true), { allowInInput: true, when: () => isEditorSurfaceFocused() }),
     command("search.clearResults", "清除查找结果", "查找", clearSearchResults),
+    command("diff.compareWithDisk", "与磁盘版本对比", "查找", () => void compareActiveWithDisk(), {
+      allowInInput: true,
+      enabled: () => Boolean(activeDocument().path),
+    }),
+    command("diff.compareFiles", "对比两个文件", "查找", () => void compareTwoFiles(), { allowInInput: true }),
+    command("diff.close", "关闭对比", "查找", closeDiffSession, {
+      allowInInput: true,
+      enabled: () => Boolean(diffSession),
+    }),
     command("editor.prefixLines", "每行加前缀", "编辑", () => void transformSelectedLines("prefix"), { when: editorOnly }),
     command("editor.suffixLines", "每行加后缀", "编辑", () => void transformSelectedLines("suffix"), { when: editorOnly }),
     command("editor.deleteEmptyLines", "删除空行", "编辑", deleteEmptyLines, { when: editorOnly }),
@@ -1830,6 +1850,9 @@ function bindActions() {
       void runBatchEditAction(button.dataset.batchAction ?? "");
     });
   });
+  $("compareDiskButton").addEventListener("click", () => void compareActiveWithDisk());
+  $("diffCloseButton").addEventListener("click", closeDiffSession);
+  $("diffSwapButton").addEventListener("click", swapDiffSides);
   $("commandButton").addEventListener("click", () => openCommandPalette("commands"));
   $("goToLineButton").addEventListener("click", goToLine);
   $("wordWrapButton").addEventListener("click", toggleWordWrap);
@@ -2008,6 +2031,8 @@ function bindActions() {
   });
   $("tree").addEventListener("contextmenu", openTreeMenu);
   $("treeOpenButton").addEventListener("click", () => void openTreeTarget());
+  $("treeCompareActiveButton").addEventListener("click", () => void compareTreeWithActive());
+  $("treeComparePickButton").addEventListener("click", () => void compareTreeWithPicked());
   $("treeNewFileButton").addEventListener("click", () => void createTreeEntry(false));
   $("treeNewFolderButton").addEventListener("click", () => void createTreeEntry(true));
   $("treeRenameButton").addEventListener("click", () => void renameTreeEntry());
@@ -2114,6 +2139,11 @@ function bindActions() {
         resolveUnsavedDialog("cancel");
         return;
       }
+      if (diffSession) {
+        event.preventDefault();
+        closeDiffSession();
+        return;
+      }
       if (hasOpenFontDropdown()) {
         closeFontDropdowns();
         return;
@@ -2192,6 +2222,9 @@ function bindAppMenus() {
   bindMenuAction("menuFindWorkspaceButton", () => void openWorkspaceFind("workspace-find"));
   bindMenuAction("menuReplaceWorkspaceButton", () => void openWorkspaceFind("workspace-replace"));
   bindMenuAction("menuGoToLineButton", goToLine);
+  bindMenuAction("menuCompareDiskButton", () => void compareActiveWithDisk());
+  bindMenuAction("menuCompareFilesButton", () => void compareTwoFiles());
+  bindMenuAction("menuCloseDiffButton", closeDiffSession);
   bindMenuAction("menuCommandButton", openCommandPalette);
   bindMenuAction("menuWordWrapButton", toggleWordWrap);
   bindMenuAction("menuMarkdownWysiwygButton", () => setMarkdownEditMode("wysiwyg"));
@@ -3386,6 +3419,7 @@ function nextUntitledTitle(extension = "txt") {
 function activateDocument(id: number) {
   const doc = state.documents.find((item) => item.id === id);
   if (!doc) return;
+  if (diffSession) closeDiffSession();
   const previous = activeDocument();
   if (previous && previous.id !== id) syncActiveBookmarkLines(previous);
   if (previous && previous.id !== id) syncMarkdownModelFromEditor(previous);
@@ -4095,7 +4129,7 @@ function openTreeMenu(event: Event) {
   closeFontDropdowns();
   const menu = $("treeMenu");
   updateTreeMenuState();
-  showContextMenu(menu, pointerEvent, 268, 300);
+  showContextMenu(menu, pointerEvent, 268, 360);
 }
 
 function treeContextTargetFromRow(row: HTMLButtonElement): TreeContextTarget {
@@ -4125,11 +4159,15 @@ function updateTreeMenuState() {
   const open = $<HTMLButtonElement>("treeOpenButton");
   const rename = $<HTMLButtonElement>("treeRenameButton");
   const remove = $<HTMLButtonElement>("treeDeleteButton");
+  const compareActive = $<HTMLButtonElement>("treeCompareActiveButton");
+  const comparePick = $<HTMLButtonElement>("treeComparePickButton");
   const openLabel = open.querySelector("strong");
   if (openLabel) openLabel.textContent = target?.isDir ? "展开/收起" : "打开";
   open.disabled = !target || target.isRoot;
   rename.disabled = !target || target.isRoot;
   remove.disabled = !target || target.isRoot;
+  compareActive.disabled = !target || target.isDir || target.isRoot;
+  comparePick.disabled = !target || target.isDir || target.isRoot;
 }
 
 async function openTreeTarget() {
@@ -5581,7 +5619,11 @@ function renderChrome() {
   $<HTMLButtonElement>("menuFormatDocumentButton").disabled = doc.readOnly || !isFormattingActionSupported();
   $<HTMLButtonElement>("workspaceFindToolButton").disabled = !state.workspace;
   $<HTMLButtonElement>("batchEditButton").disabled = doc.readOnly || isMarkdownWysiwygActive(doc);
+  $<HTMLButtonElement>("compareDiskButton").disabled = !doc.path;
   $<HTMLButtonElement>("findRailButton").disabled = !state.workspace;
+  $<HTMLButtonElement>("menuCompareDiskButton").disabled = !doc.path;
+  $<HTMLButtonElement>("menuCloseDiffButton").disabled = !diffSession;
+  $<HTMLButtonElement>("diffSwapButton").disabled = !diffSession;
   ["menuMarkdownWysiwygButton", "menuMarkdownSplitButton", "menuMarkdownSourceButton"].forEach((id) => {
     $<HTMLButtonElement>(id).disabled = !markdownDocument;
   });
@@ -5632,9 +5674,13 @@ function commandElementIds(): Record<string, string> {
   findButton: "search.find",
   replaceButton: "search.replace",
   workspaceFindToolButton: "search.workspaceFind",
+  compareDiskButton: "diff.compareWithDisk",
   goToLineButton: "navigation.goToLine",
   commandButton: "navigation.commandPalette",
   findRailButton: "search.workspaceFind",
+  menuCompareDiskButton: "diff.compareWithDisk",
+  menuCompareFilesButton: "diff.compareFiles",
+  menuCloseDiffButton: "diff.close",
   menuNewButton: "file.new",
   menuNewMarkdownButton: "file.newMarkdown",
   menuOpenButton: "file.open",
@@ -7169,6 +7215,17 @@ function runEditorLayout() {
   editorLayoutSettleFrame = 0;
   const forceRender = editorLayoutForceRender;
   editorLayoutForceRender = false;
+  if (diffSession && diffEditor) {
+    const diffContainer = $("diffEditor");
+    const diffRect = diffContainer.getBoundingClientRect();
+    const diffWidth = Math.floor(diffRect.width);
+    const diffHeight = Math.floor(diffRect.height);
+    if (diffWidth > 0 && diffHeight > 0) {
+      diffEditor.layout({ width: diffWidth, height: diffHeight });
+    } else if (forceRender) {
+      diffEditor.layout();
+    }
+  }
   const container = $("editor");
   const rect = container.getBoundingClientRect();
   const width = Math.floor(rect.width);
@@ -7759,8 +7816,218 @@ function openQuickOpen() {
 }
 
 function openCurrentFind(view: "find" | "replace") {
+  if (diffSession) closeDiffSession();
   setFindView(view);
   toggleFindOpen({ prefillFromSelection: true });
+}
+
+function ensureDiffEditor() {
+  if (diffEditor) return diffEditor;
+  diffEditor = monaco.editor.createDiffEditor($("diffEditor"), {
+    automaticLayout: false,
+    theme: state.darkMode ? "notra-dark" : "notra-light",
+    fontFamily: resolveEditorFontStack(),
+    fontSize: state.fontSize,
+    lineHeight: editorLineHeight(),
+    readOnly: false,
+    originalEditable: false,
+    renderSideBySide: true,
+    enableSplitViewResizing: true,
+    renderIndicators: true,
+    ignoreTrimWhitespace: false,
+    minimap: { enabled: false },
+    scrollbar: { verticalScrollbarSize: 10, horizontalScrollbarSize: 10 },
+  });
+  return diffEditor;
+}
+
+function setDiffSurfaceOpen(open: boolean) {
+  $("diffHost").classList.toggle("hidden", !open);
+  $("editor").classList.toggle("hidden", open);
+  document.body.classList.toggle("diff-open", open);
+  if (open) {
+    setCurrentFindDockOpen(false);
+    if (isMarkdownWysiwygActive()) {
+      // keep markdown mode state, but hide live surface while diffing
+      $("markdownWysiwyg").classList.add("hidden");
+      $("markdownPreview").classList.add("hidden");
+      $("markdownPreviewResize").classList.add("hidden");
+    }
+  } else if (!isMarkdownWysiwygActive()) {
+    $("editor").classList.remove("hidden");
+  }
+  requestEditorLayout();
+}
+
+function openDiffSession(options: {
+  leftLabel: string;
+  rightLabel: string;
+  originalText: string;
+  modifiedText: string;
+  language: string;
+  modifiedModel?: monaco.editor.ITextModel;
+  originalReadOnly?: boolean;
+  modifiedReadOnly?: boolean;
+}) {
+  const instance = ensureDiffEditor();
+  if (diffSession) disposeDiffSessionModels(false);
+  const language = options.language || "plaintext";
+  const originalModel = monaco.editor.createModel(options.originalText, language);
+  const ownsModified = !options.modifiedModel;
+  const modifiedModel = options.modifiedModel
+    ?? monaco.editor.createModel(options.modifiedText, language);
+  if (options.modifiedModel && options.modifiedModel.getLanguageId() !== language) {
+    monaco.editor.setModelLanguage(options.modifiedModel, language);
+  }
+  diffSession = {
+    leftLabel: options.leftLabel,
+    rightLabel: options.rightLabel,
+    originalModel,
+    modifiedModel,
+    ownsOriginal: true,
+    ownsModified,
+    renderSideBySide: true,
+  };
+  instance.setModel({ original: originalModel, modified: modifiedModel });
+  instance.updateOptions({
+    originalEditable: options.originalReadOnly === false,
+    readOnly: options.modifiedReadOnly === true,
+    renderSideBySide: true,
+  });
+  $("diffLeftLabel").textContent = options.leftLabel;
+  $("diffRightLabel").textContent = options.rightLabel;
+  setDiffSurfaceOpen(true);
+  window.requestAnimationFrame(() => {
+    instance.layout();
+    instance.focus();
+  });
+  log(`已打开对比：${options.leftLabel} ↔ ${options.rightLabel}`);
+  renderChrome();
+}
+
+function disposeDiffSessionModels(clearSession: boolean) {
+  if (!diffSession) return;
+  diffEditor?.setModel(null);
+  if (diffSession.ownsOriginal) diffSession.originalModel.dispose();
+  if (diffSession.ownsModified) diffSession.modifiedModel.dispose();
+  if (clearSession) diffSession = null;
+}
+
+function closeDiffSession() {
+  if (!diffSession) return;
+  disposeDiffSessionModels(true);
+  setDiffSurfaceOpen(false);
+  if (isMarkdownLikeDocument() && state.markdownEditMode !== "source") {
+    // restore markdown surfaces via existing mode render path
+    setMarkdownEditMode(state.markdownEditMode);
+  } else {
+    attachEditorModel(activeDocument());
+    $("editor").classList.remove("hidden");
+  }
+  requestEditorLayout();
+  focusActiveEditor();
+  log("已关闭对比");
+  renderChrome();
+}
+
+function swapDiffSides() {
+  if (!diffSession || !diffEditor) return;
+  const session = diffSession;
+  const nextOriginal = session.modifiedModel;
+  const nextModified = session.originalModel;
+  diffSession = {
+    leftLabel: session.rightLabel,
+    rightLabel: session.leftLabel,
+    originalModel: nextOriginal,
+    modifiedModel: nextModified,
+    ownsOriginal: session.ownsModified,
+    ownsModified: session.ownsOriginal,
+    renderSideBySide: session.renderSideBySide,
+  };
+  diffEditor.setModel({ original: nextOriginal, modified: nextModified });
+  $("diffLeftLabel").textContent = diffSession.leftLabel;
+  $("diffRightLabel").textContent = diffSession.rightLabel;
+  log("已交换对比左右侧");
+}
+
+async function compareActiveWithDisk() {
+  const doc = activeDocument();
+  if (!doc.path) {
+    log("当前文档尚未保存到磁盘，无法对比");
+    return;
+  }
+  if (isMarkdownWysiwygActive()) syncMarkdownModelFromEditor(doc);
+  const disk = await withBusy(`读取磁盘 ${fileNameFromPath(doc.path)}`, () => invoke<DocumentDto>("open_path", { path: doc.path! }));
+  openDiffSession({
+    leftLabel: `磁盘 · ${fileNameFromPath(doc.path)}`,
+    rightLabel: `当前 · ${doc.title}${doc.dirty ? " *" : ""}`,
+    originalText: disk.text,
+    modifiedText: doc.model.getValue(),
+    language: doc.language || disk.language || "plaintext",
+    modifiedModel: doc.model,
+    modifiedReadOnly: doc.readOnly,
+  });
+}
+
+async function compareTwoFiles(preferredLeftPath?: string) {
+  const leftPath = preferredLeftPath ?? await invoke<string | null>("pick_file_path", {
+    request: {
+      defaultDir: preferredDialogDirectory(),
+    },
+  });
+  if (!leftPath) return;
+  const rightPath = await invoke<string | null>("pick_file_path", {
+    request: {
+      defaultDir: pathDirectory(leftPath) || preferredDialogDirectory(),
+    },
+  });
+  if (!rightPath) return;
+  const [left, right] = await withBusy("读取对比文件", async () => {
+    const leftDto = await invoke<DocumentDto>("open_path", { path: leftPath });
+    const rightDto = await invoke<DocumentDto>("open_path", { path: rightPath });
+    return [leftDto, rightDto] as const;
+  });
+  openDiffSession({
+    leftLabel: fileNameFromPath(leftPath),
+    rightLabel: fileNameFromPath(rightPath),
+    originalText: left.text,
+    modifiedText: right.text,
+    language: left.language || right.language || "plaintext",
+    modifiedReadOnly: true,
+  });
+}
+
+async function compareTreeWithActive() {
+  const target = treeMenuTarget;
+  closeMenus();
+  if (!target || target.isDir || target.isRoot) return;
+  const doc = activeDocument();
+  if (doc.path && pathsEqual(doc.path, target.path)) {
+    await compareActiveWithDisk();
+    return;
+  }
+  if (isMarkdownWysiwygActive()) syncMarkdownModelFromEditor(doc);
+  const other = await withBusy(`读取 ${target.name}`, () => invoke<DocumentDto>("open_path", { path: target.path }));
+  openDiffSession({
+    leftLabel: target.name,
+    rightLabel: `当前 · ${doc.title}${doc.dirty ? " *" : ""}`,
+    originalText: other.text,
+    modifiedText: doc.model.getValue(),
+    language: doc.language || other.language || "plaintext",
+    modifiedModel: doc.model,
+    modifiedReadOnly: doc.readOnly,
+  });
+}
+
+async function compareTreeWithPicked() {
+  const target = treeMenuTarget;
+  closeMenus();
+  if (!target || target.isDir || target.isRoot) return;
+  await compareTwoFiles(target.path);
+}
+
+function pathsEqual(left: string, right: string) {
+  return left.replace(/\\/g, "/").toLowerCase() === right.replace(/\\/g, "/").toLowerCase();
 }
 
 function buildReplacedLinePreview(match: TextMatchDto, replacement: string) {
