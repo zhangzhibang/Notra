@@ -140,6 +140,7 @@
           <button class="tool-button" id="workspaceFindToolButton" aria-label="在文件中查找" title="在文件中查找"><span class="icon-slot" data-icon="FileSearch"></span><span data-label>文件查找</span></button>
           <button class="tool-button" id="batchEditButton" data-menu-trigger aria-label="批量改行" title="批量改行" aria-haspopup="menu" aria-controls="batchEditMenu" aria-expanded="false"><span class="icon-slot" data-icon="ListTree"></span><span data-label>批量改行</span></button>
           <button class="tool-button" id="compareDiskButton" aria-label="与磁盘版本对比" title="与磁盘版本对比"><span class="icon-slot" data-icon="Columns2"></span><span data-label>对比磁盘</span></button>
+          <button class="tool-button" id="compareOpenTabButton" aria-label="与已打开标签对比" title="与已打开标签对比"><span class="icon-slot" data-icon="Files"></span><span data-label>对比标签</span></button>
           <button class="tool-button" id="goToLineButton" aria-label="跳转到行 Ctrl+G" title="跳转到行 Ctrl+G" aria-keyshortcuts="Control+G"><span class="icon-slot" data-icon="ListRestart"></span><span data-label>跳转到行</span></button>
           <button class="tool-button" id="commandButton" aria-label="命令面板 Ctrl+P" title="命令面板 Ctrl+P" aria-keyshortcuts="Control+P"><span class="icon-slot" data-icon="Command"></span><span data-label>命令面板</span></button>
           <span class="tool-divider"></span>
@@ -206,6 +207,7 @@
           <div class="menu-divider"></div>
           <button class="menu-row" id="menuCompareDiskButton" role="menuitem"><span class="icon-slot" data-icon="Columns2"></span><strong>与磁盘版本对比</strong><small></small></button>
           <button class="menu-row" id="menuCompareFilesButton" role="menuitem"><span class="icon-slot" data-icon="Files"></span><strong>对比两个文件…</strong><small></small></button>
+          <button class="menu-row" id="menuCompareOpenTabButton" role="menuitem"><span class="icon-slot" data-icon="Files"></span><strong>与已打开标签对比…</strong><small></small></button>
           <button class="menu-row" id="menuCloseDiffButton" role="menuitem"><span class="icon-slot" data-icon="X"></span><strong>关闭对比</strong><small>Esc</small></button>
           <div class="menu-divider"></div>
           <button class="menu-row" id="menuCommandButton" role="menuitem"><span class="icon-slot" data-icon="Command"></span><strong>命令面板</strong><small>Ctrl+P</small></button>
@@ -298,6 +300,18 @@
               <div class="current-find-history-menu hidden" id="currentFindHistoryMenu" role="listbox" aria-label="搜索历史"></div>
             </div>
             <div id="editor"></div>
+            <div class="editor-quick-start hidden" id="editorQuickStart" aria-label="快速开始">
+              <strong>文本工作台</strong>
+              <p>看文件 · 查找替换 · 批量改行 · 对比 · 格式化</p>
+              <div class="editor-quick-actions">
+                <button type="button" class="tool-button" data-quick-action="open-file"><span class="icon-slot" data-icon="FolderOpen"></span><span>打开文件</span></button>
+                <button type="button" class="tool-button" data-quick-action="open-folder"><span class="icon-slot" data-icon="FolderTree"></span><span>打开工作区</span></button>
+                <button type="button" class="tool-button" data-quick-action="find"><span class="icon-slot" data-icon="Search"></span><span>查找</span></button>
+                <button type="button" class="tool-button" data-quick-action="format"><span class="icon-slot" data-icon="Braces"></span><span>格式化</span></button>
+                <button type="button" class="tool-button" data-quick-action="compare-files"><span class="icon-slot" data-icon="Columns2"></span><span>对比文件</span></button>
+                <button type="button" class="tool-button" data-quick-action="commands"><span class="icon-slot" data-icon="Command"></span><span>命令面板</span></button>
+              </div>
+            </div>
             <div class="diff-host hidden" id="diffHost" aria-label="文件对比">
               <header class="diff-toolbar">
                 <div class="diff-titles">
@@ -306,7 +320,8 @@
                   <strong id="diffRightLabel">修改</strong>
                 </div>
                 <div class="diff-actions">
-                  <button type="button" class="tool-button" id="diffSwapButton" title="交换左右"><span class="icon-slot" data-icon="Columns2"></span><span>交换</span></button>
+                  <button type="button" class="tool-button" id="diffLayoutButton" title="切换并排/内联"><span class="icon-slot" data-icon="Columns2"></span><span data-label>并排</span></button>
+                  <button type="button" class="tool-button" id="diffSwapButton" title="交换左右"><span class="icon-slot" data-icon="Replace"></span><span>交换</span></button>
                   <button type="button" class="tool-button" id="diffCloseButton" title="关闭对比 Esc"><span class="icon-slot" data-icon="X"></span><span>关闭</span></button>
                 </div>
               </header>
@@ -353,6 +368,14 @@
           <button type="button" role="menuitem" data-batch-action="duplicate-line"><span class="icon-slot" data-icon="Copy"></span><span>向下复制行</span></button>
           <button type="button" role="menuitem" data-batch-action="select-all-occurrences"><span class="icon-slot" data-icon="Highlighter"></span><span>选中所有同词</span></button>
         </div>
+      </section>
+
+      <section class="popover menu-popover hidden" id="compareOpenTabMenu" role="menu" aria-label="选择对比标签">
+        <header class="popover-head">
+          <strong>与已打开标签对比</strong>
+          <span>选择作为左侧（原始）的标签</span>
+        </header>
+        <div class="menu-list" id="compareOpenTabList"></div>
       </section>
 
       <section class="popover hidden" id="encodingMenu">

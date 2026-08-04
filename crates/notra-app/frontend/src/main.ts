@@ -1607,6 +1607,14 @@ function registerAppCommands() {
       enabled: () => Boolean(activeDocument().path),
     }),
     command("diff.compareFiles", "对比两个文件", "查找", () => void compareTwoFiles(), { allowInInput: true }),
+    command("diff.compareOpenTab", "与已打开标签对比", "查找", openCompareOpenTabMenu, {
+      allowInInput: true,
+      enabled: () => state.documents.length > 1,
+    }),
+    command("diff.toggleLayout", "切换对比布局", "查找", toggleDiffLayout, {
+      allowInInput: true,
+      enabled: () => Boolean(diffSession),
+    }),
     command("diff.close", "关闭对比", "查找", closeDiffSession, {
       allowInInput: true,
       enabled: () => Boolean(diffSession),
@@ -1851,8 +1859,13 @@ function bindActions() {
     });
   });
   $("compareDiskButton").addEventListener("click", () => void compareActiveWithDisk());
+  $("compareOpenTabButton").addEventListener("click", openCompareOpenTabMenu);
   $("diffCloseButton").addEventListener("click", closeDiffSession);
   $("diffSwapButton").addEventListener("click", swapDiffSides);
+  $("diffLayoutButton").addEventListener("click", toggleDiffLayout);
+  $("editorQuickStart").querySelectorAll<HTMLButtonElement>("[data-quick-action]").forEach((button) => {
+    button.addEventListener("click", () => void runQuickStartAction(button.dataset.quickAction ?? ""));
+  });
   $("commandButton").addEventListener("click", () => openCommandPalette("commands"));
   $("goToLineButton").addEventListener("click", goToLine);
   $("wordWrapButton").addEventListener("click", toggleWordWrap);
@@ -2224,6 +2237,7 @@ function bindAppMenus() {
   bindMenuAction("menuGoToLineButton", goToLine);
   bindMenuAction("menuCompareDiskButton", () => void compareActiveWithDisk());
   bindMenuAction("menuCompareFilesButton", () => void compareTwoFiles());
+  bindMenuAction("menuCompareOpenTabButton", openCompareOpenTabMenu);
   bindMenuAction("menuCloseDiffButton", closeDiffSession);
   bindMenuAction("menuCommandButton", openCommandPalette);
   bindMenuAction("menuWordWrapButton", toggleWordWrap);
@@ -5620,10 +5634,13 @@ function renderChrome() {
   $<HTMLButtonElement>("workspaceFindToolButton").disabled = !state.workspace;
   $<HTMLButtonElement>("batchEditButton").disabled = doc.readOnly || isMarkdownWysiwygActive(doc);
   $<HTMLButtonElement>("compareDiskButton").disabled = !doc.path;
+  $<HTMLButtonElement>("compareOpenTabButton").disabled = state.documents.length <= 1;
   $<HTMLButtonElement>("findRailButton").disabled = !state.workspace;
   $<HTMLButtonElement>("menuCompareDiskButton").disabled = !doc.path;
+  $<HTMLButtonElement>("menuCompareOpenTabButton").disabled = state.documents.length <= 1;
   $<HTMLButtonElement>("menuCloseDiffButton").disabled = !diffSession;
   $<HTMLButtonElement>("diffSwapButton").disabled = !diffSession;
+  $<HTMLButtonElement>("diffLayoutButton").disabled = !diffSession;
   ["menuMarkdownWysiwygButton", "menuMarkdownSplitButton", "menuMarkdownSourceButton"].forEach((id) => {
     $<HTMLButtonElement>(id).disabled = !markdownDocument;
   });
@@ -5645,16 +5662,25 @@ function renderChrome() {
     : state.keybindingHint
       ? `<span class="keybinding-hint">${escapeHtml(state.keybindingHint)}</span>`
       : "";
-  $("statusDocumentState").textContent = [doc.readOnly ? "只读" : "", doc.encodingStatus]
-    .filter(Boolean)
-    .join(" · ");
-  $("statusRight").innerHTML = [
-    `第 ${editor.getPosition()?.lineNumber ?? 1} 行，第 ${editor.getPosition()?.column ?? 1} 列`,
-    `${doc.model.getLineCount()} 行`,
-    `${doc.model.getValueLength()} 字符`,
-    `${formatBytes(doc.fileSize)}`,
-  ].map((item) => `<span>${item}</span>`).join(`<span class="dot"></span>`);
+  $("statusDocumentState").textContent = diffSession
+    ? `对比中 · ${diffSession.leftLabel} ↔ ${diffSession.rightLabel}`
+    : [doc.readOnly ? "只读" : "", doc.encodingStatus]
+      .filter(Boolean)
+      .join(" · ");
+  $("statusRight").innerHTML = diffSession
+    ? [
+      diffSession.renderSideBySide ? "并排对比" : "内联对比",
+      "Esc 关闭",
+    ].map((item) => `<span>${item}</span>`).join(`<span class="dot"></span>`)
+    : [
+      `第 ${editor.getPosition()?.lineNumber ?? 1} 行，第 ${editor.getPosition()?.column ?? 1} 列`,
+      `${doc.model.getLineCount()} 行`,
+      `${doc.model.getValueLength()} 字符`,
+      `${formatBytes(doc.fileSize)}`,
+    ].map((item) => `<span>${item}</span>`).join(`<span class="dot"></span>`);
   renderShortcutHints();
+  renderEditorQuickStart();
+  renderDiffToolbar();
 }
 
 function commandElementIds(): Record<string, string> {
@@ -5675,11 +5701,13 @@ function commandElementIds(): Record<string, string> {
   replaceButton: "search.replace",
   workspaceFindToolButton: "search.workspaceFind",
   compareDiskButton: "diff.compareWithDisk",
+  compareOpenTabButton: "diff.compareOpenTab",
   goToLineButton: "navigation.goToLine",
   commandButton: "navigation.commandPalette",
   findRailButton: "search.workspaceFind",
   menuCompareDiskButton: "diff.compareWithDisk",
   menuCompareFilesButton: "diff.compareFiles",
+  menuCompareOpenTabButton: "diff.compareOpenTab",
   menuCloseDiffButton: "diff.close",
   menuNewButton: "file.new",
   menuNewMarkdownButton: "file.newMarkdown",
@@ -7754,6 +7782,7 @@ function closeMenus() {
   $("lineEndingMenu").classList.add("hidden");
   $("recentMenu").classList.add("hidden");
   $("batchEditMenu").classList.add("hidden");
+  $("compareOpenTabMenu").classList.add("hidden");
   $("tabMenu").classList.add("hidden");
   $("treeMenu").classList.add("hidden");
   $("markdownContextMenu").classList.add("hidden");
@@ -7767,7 +7796,7 @@ function closeMenus() {
   document.querySelectorAll<HTMLButtonElement>(".app-menu-trigger").forEach((trigger) => {
     trigger.setAttribute("aria-expanded", "false");
   });
-  ["languageButton", "encodingButton", "lineEndingButton", "recentButton", "batchEditButton"].forEach((id) => {
+  ["languageButton", "encodingButton", "lineEndingButton", "recentButton", "batchEditButton", "compareOpenTabButton"].forEach((id) => {
     $<HTMLButtonElement>(id).setAttribute("aria-expanded", "false");
   });
 }
@@ -7892,11 +7921,12 @@ function openDiffSession(options: {
   instance.updateOptions({
     originalEditable: options.originalReadOnly === false,
     readOnly: options.modifiedReadOnly === true,
-    renderSideBySide: true,
+    renderSideBySide: diffSession.renderSideBySide,
   });
   $("diffLeftLabel").textContent = options.leftLabel;
   $("diffRightLabel").textContent = options.rightLabel;
   setDiffSurfaceOpen(true);
+  renderDiffToolbar();
   window.requestAnimationFrame(() => {
     instance.layout();
     instance.focus();
@@ -7948,6 +7978,118 @@ function swapDiffSides() {
   $("diffLeftLabel").textContent = diffSession.leftLabel;
   $("diffRightLabel").textContent = diffSession.rightLabel;
   log("已交换对比左右侧");
+  renderChrome();
+}
+
+function toggleDiffLayout() {
+  if (!diffSession || !diffEditor) return;
+  diffSession.renderSideBySide = !diffSession.renderSideBySide;
+  diffEditor.updateOptions({ renderSideBySide: diffSession.renderSideBySide });
+  renderDiffToolbar();
+  requestEditorLayout();
+  log(diffSession.renderSideBySide ? "对比布局：并排" : "对比布局：内联");
+  renderChrome();
+}
+
+function renderDiffToolbar() {
+  const button = $<HTMLButtonElement>("diffLayoutButton");
+  if (!button) return;
+  const sideBySide = diffSession?.renderSideBySide !== false;
+  button.classList.toggle("state-on", sideBySide);
+  button.title = sideBySide ? "切换为内联对比" : "切换为并排对比";
+  const label = button.querySelector<HTMLElement>("[data-label]");
+  if (label) label.textContent = sideBySide ? "并排" : "内联";
+  setIconSlot(button.querySelector(".icon-slot"), sideBySide ? "Columns2" : "List");
+}
+
+function openCompareOpenTabMenu() {
+  const candidates = state.documents.filter((doc) => doc.id !== state.activeId);
+  if (candidates.length === 0) {
+    log("至少再打开一个标签才能对比");
+    return;
+  }
+  closeMenus();
+  closeFontDropdowns();
+  const menu = $("compareOpenTabMenu");
+  const list = $("compareOpenTabList");
+  list.innerHTML = "";
+  for (const doc of candidates) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "menu-row";
+    button.setAttribute("role", "menuitem");
+    button.innerHTML = `<span class="icon-slot" data-icon="FileText"></span><strong>${escapeHtml(doc.title)}${doc.dirty ? " *" : ""}</strong><small>${escapeHtml(doc.path || "未保存")}</small>`;
+    button.addEventListener("click", () => {
+      closeMenus();
+      compareWithOpenDocument(doc.id);
+    });
+    list.appendChild(button);
+  }
+  renderIconSlots(list);
+  const trigger = $<HTMLButtonElement>("compareOpenTabButton");
+  const rect = trigger.getBoundingClientRect();
+  menu.classList.remove("hidden");
+  menu.style.right = "auto";
+  menu.style.bottom = "auto";
+  const menuWidth = menu.offsetWidth || 320;
+  const menuHeight = menu.offsetHeight || 280;
+  menu.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - menuWidth - 8))}px`;
+  menu.style.top = `${Math.max(8, Math.min(rect.bottom + 6, window.innerHeight - menuHeight - 8))}px`;
+  trigger.setAttribute("aria-expanded", "true");
+}
+
+function compareWithOpenDocument(otherId: number) {
+  const current = activeDocument();
+  const other = state.documents.find((doc) => doc.id === otherId);
+  if (!other || other.id === current.id) return;
+  if (isMarkdownWysiwygActive()) syncMarkdownModelFromEditor(current);
+  openDiffSession({
+    leftLabel: `${other.title}${other.dirty ? " *" : ""}`,
+    rightLabel: `当前 · ${current.title}${current.dirty ? " *" : ""}`,
+    originalText: other.model.getValue(),
+    modifiedText: current.model.getValue(),
+    language: current.language || other.language || "plaintext",
+    modifiedModel: current.model,
+    modifiedReadOnly: current.readOnly,
+  });
+}
+
+function renderEditorQuickStart() {
+  const panel = $("editorQuickStart");
+  if (!panel) return;
+  const doc = activeDocument();
+  const show = !diffSession
+    && !isMarkdownWysiwygActive(doc)
+    && !doc.path
+    && !doc.dirty
+    && doc.model.getValueLength() === 0
+    && state.documents.length === 1;
+  panel.classList.toggle("hidden", !show);
+}
+
+async function runQuickStartAction(action: string) {
+  switch (action) {
+    case "open-file":
+      await openDocument();
+      return;
+    case "open-folder":
+      await enterWorkspaceMode();
+      return;
+    case "find":
+      openCurrentFind("find");
+      return;
+    case "format":
+      await formatActiveDocument();
+      return;
+    case "compare-files":
+      await compareTwoFiles();
+      return;
+    case "commands":
+      openCommandPalette("commands");
+      return;
+    default:
+      return;
+  }
 }
 
 async function compareActiveWithDisk() {

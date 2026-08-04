@@ -5612,3 +5612,75 @@ body.diff-open #markdownPreviewResize {
 #editor.hidden {
   display: none !important;
 }
+
+.editor-wrap {
+  position: relative;
+}
+
+.editor-quick-start {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  place-content: center;
+  gap: 10px;
+  padding: 24px;
+  pointer-events: none;
+  text-align: center;
+  color: var(--muted, #64748b);
+  background:
+    radial-gradient(circle at top, color-mix(in srgb, var(--accent, #2563eb) 10%, transparent), transparent 55%);
+}
+
+.editor-quick-start.hidden {
+  display: none !important;
+}
+
+.editor-quick-start strong {
+  color: var(--text, #0f172a);
+  font-size: 18px;
+}
+
+.editor-quick-start p {
+  margin: 0;
+  font-size: 13px;
+}
+
+.editor-quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 8px;
+  pointer-events: auto;
+}
+
+.editor-quick-actions .tool-button {
+  background: var(--panel, #fff);
+  border: 1px solid var(--border, rgba(15, 23, 42, 0.12));
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+#compareOpenTabMenu .menu-list {
+  max-height: min(420px, 60vh);
+  overflow: auto;
+}
+
+#compareOpenTabMenu .menu-row {
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 8px;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+}
+
+#compareOpenTabMenu .menu-row .icon-slot {
+  grid-row: 1 / span 2;
+}
+
+#compareOpenTabMenu .menu-row small {
+  grid-column: 2;
+  opacity: 0.7;
+}
