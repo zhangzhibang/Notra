@@ -33,6 +33,9 @@ export type ToolboxToolId =
   | "json-pretty"
   | "json-minify"
   | "json-sort-keys"
+  | "json-validate"
+  | "json-flatten"
+  | "json-get-path"
   | "json-escape"
   | "json-unescape"
   | "sql-format"
@@ -83,6 +86,7 @@ export interface ToolboxContext {
   suffix?: string;
   delimiter?: string;
   columnIndex?: number; // 1-based
+  path?: string;
 }
 
 export type ToolboxResult =
@@ -96,7 +100,7 @@ export interface ToolboxItem {
   description: string;
   featured?: boolean;
   destructive?: boolean;
-  needsInput?: "prefix" | "suffix" | "delimiter" | "column";
+  needsInput?: "prefix" | "suffix" | "delimiter" | "column" | "path";
   asyncKind?: "sql-format";
   action?: "compare-disk" | "compare-files" | "compare-tabs";
   recipeSteps?: ToolboxToolId[];
@@ -182,6 +186,9 @@ export const TOOLBOX_ITEMS: ToolboxItem[] = [
   { id: "json-pretty", category: "json", title: "JSON 美化", description: "pretty print", featured: true },
   { id: "json-minify", category: "json", title: "JSON 压缩", description: "minify", featured: true },
   { id: "json-sort-keys", category: "json", title: "JSON 键名排序", description: "递归排序 key 后美化", featured: true },
+  { id: "json-validate", category: "json", title: "JSON 校验", description: "只检查是否合法，不改文本", featured: true },
+  { id: "json-flatten", category: "json", title: "JSON 扁平化", description: "嵌套对象 → a.b=c 行文本", featured: true },
+  { id: "json-get-path", category: "json", title: "按路径取值", description: "如 data.items.0.name", featured: true, needsInput: "path" },
   { id: "json-escape", category: "json", title: "转成 JSON 字符串", description: "文本 → \"...\" 转义", featured: true },
   { id: "json-unescape", category: "json", title: "解析 JSON 字符串", description: "\"...\" → 文本", featured: true },
 
@@ -337,6 +344,29 @@ export function runToolboxTool(id: ToolboxToolId, input: string, ctx: ToolboxCon
         return ok(JSON.stringify(JSON.parse(input)), "JSON 已压缩");
       case "json-sort-keys":
         return ok(JSON.stringify(sortJsonKeys(JSON.parse(input)), null, indentUnit(ctx)), "JSON 键名已排序");
+      case "json-validate": {
+        const parsed = JSON.parse(input);
+        const type = Array.isArray(parsed) ? "array" : parsed === null ? "null" : typeof parsed;
+        return {
+          ok: true,
+          text: input,
+          replace: false,
+          message: `JSON 合法 · 根类型 ${type}`,
+        };
+      }
+      case "json-flatten": {
+        const flat = flattenJson(JSON.parse(input));
+        const lines = Object.keys(flat).sort((a, b) => a.localeCompare(b)).map((key) => `${key}=${flat[key]}`);
+        return ok(lines.join("\n"), `已扁平化 ${lines.length} 个键`);
+      }
+      case "json-get-path": {
+        const path = (ctx.path ?? "").trim();
+        if (!path) return { ok: false, error: "请输入 JSON 路径，例如 data.items.0.id" };
+        const value = getJsonPath(JSON.parse(input), path);
+        if (value === undefined) return { ok: false, error: `路径不存在：${path}` };
+        if (typeof value === "string") return ok(value, `已取值：${path}`);
+        return ok(JSON.stringify(value, null, indentUnit(ctx)), `已取值：${path}`);
+      }
       case "json-escape":
         return ok(JSON.stringify(input), "已转为 JSON 字符串");
       case "json-unescape": {
@@ -473,6 +503,49 @@ function sortJsonKeys(value: unknown): unknown {
     return sorted;
   }
   return value;
+}
+
+function flattenJson(value: unknown, prefix = "", out: Record<string, string> = {}): Record<string, string> {
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => {
+      const next = prefix ? `${prefix}.${index}` : String(index);
+      flattenJson(item, next, out);
+    });
+    return out;
+  }
+  if (value && typeof value === "object") {
+    for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+      const next = prefix ? `${prefix}.${key}` : key;
+      flattenJson(nested, next, out);
+    }
+    return out;
+  }
+  out[prefix || "(root)"] = value === null || value === undefined ? String(value) : String(value);
+  return out;
+}
+
+function getJsonPath(value: unknown, path: string): unknown {
+  const parts = path
+    .replace(/\[(\d+)\]/g, ".$1")
+    .split(".")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  let current: unknown = value;
+  for (const part of parts) {
+    if (current == null) return undefined;
+    if (Array.isArray(current)) {
+      const index = Number(part);
+      if (!Number.isInteger(index)) return undefined;
+      current = current[index];
+      continue;
+    }
+    if (typeof current === "object") {
+      current = (current as Record<string, unknown>)[part];
+      continue;
+    }
+    return undefined;
+  }
+  return current;
 }
 
 function utf8ToBase64(text: string): string {

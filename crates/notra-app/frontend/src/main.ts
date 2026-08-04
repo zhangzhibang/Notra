@@ -1895,7 +1895,7 @@ function bindActions() {
       void previewSelectedToolboxItem();
     });
   });
-  ["toolboxPrefixInput", "toolboxSuffixInput", "toolboxDelimiterInput", "toolboxColumnInput"].forEach((id) => {
+  ["toolboxPrefixInput", "toolboxSuffixInput", "toolboxDelimiterInput", "toolboxColumnInput", "toolboxPathInput"].forEach((id) => {
     $(id).addEventListener("input", () => {
       window.clearTimeout(toolboxPreviewTimer);
       toolboxPreviewTimer = window.setTimeout(() => void previewSelectedToolboxItem(), 180);
@@ -2648,6 +2648,16 @@ function openToolboxPage() {
   closeMenus();
   closeSettingsPage();
   $("commandPalette").classList.add("hidden");
+  const language = activeDocument().language;
+  if (language === "json") {
+    toolboxCategory = "json";
+    if (!String(toolboxSelectedId || "").startsWith("json") && !String(toolboxSelectedId || "").includes("json")) {
+      toolboxSelectedId = "json-pretty";
+    }
+  } else if (language === "sql") {
+    toolboxCategory = "structure";
+    toolboxSelectedId = "sql-format";
+  }
   $("toolboxPage").classList.remove("hidden");
   $("app").classList.add("toolbox-open");
   $("toolboxButton").classList.add("active");
@@ -2699,6 +2709,10 @@ function renderToolboxPage() {
       renderToolboxPage();
       void previewSelectedToolboxItem();
     });
+    button.addEventListener("dblclick", () => {
+      toolboxSelectedId = item.id;
+      void applySelectedToolboxItem();
+    });
     list.appendChild(button);
   }
   renderToolboxScope();
@@ -2719,6 +2733,7 @@ function renderToolboxParams() {
   $("toolboxSuffixField").classList.toggle("hidden", needs !== "suffix");
   $("toolboxDelimiterField").classList.toggle("hidden", needs !== "delimiter");
   $("toolboxColumnField").classList.toggle("hidden", needs !== "column");
+  $("toolboxPathField").classList.toggle("hidden", needs !== "path");
 }
 
 function getToolboxSourceText(): string {
@@ -2742,6 +2757,7 @@ function buildToolboxContext(): ToolboxContext {
     suffix: ($("toolboxSuffixInput") as HTMLInputElement).value,
     delimiter: ($("toolboxDelimiterInput") as HTMLInputElement).value || undefined,
     columnIndex: Number(($("toolboxColumnInput") as HTMLInputElement).value || "1"),
+    path: ($("toolboxPathInput") as HTMLInputElement).value || undefined,
   };
 }
 
@@ -2833,11 +2849,7 @@ async function applySelectedToolboxItem() {
   }
   await previewSelectedToolboxItem();
   if (!toolboxLastReplace) {
-    log(toolboxLastPreviewText ? "统计类工具仅预览，不写回编辑器" : "没有可应用的预览");
-    return;
-  }
-  if (!toolboxLastPreviewText && toolboxLastPreviewText !== "") {
-    log("请先生成有效预览");
+    log("该工具仅预览/统计，不会写回编辑器");
     return;
   }
   const source = getToolboxSourceText();
