@@ -792,7 +792,7 @@ const state = {
   editorFontMode: "preset" as FontMode,
   editorFontPreset: DEFAULT_EDITOR_FONT_PRESET as EditorFontPreset,
   editorFontCustom: EDITOR_FONT_STACKS[DEFAULT_EDITOR_FONT_PRESET],
-  keymapProfile: "vscode" as KeymapProfile,
+  keymapProfile: "notra" as KeymapProfile,
   keybindingOverrides: {} as KeybindingOverrides,
   bookmarks: {} as Record<string, number[]>,
   settingsSection: "appearance" as SettingsSection,
@@ -1261,7 +1261,10 @@ function bootstrap() {
       openRequestsReady = true;
       await drainOpenRequests();
     })
-    .finally(markAppReady);
+    .finally(() => {
+      markAppReady();
+      maybeShowShortcutTip();
+    });
   log("Notra Monaco UI ready");
 }
 
@@ -1273,6 +1276,38 @@ function markAppReady() {
       $("bootSplash")?.remove();
     });
   });
+}
+
+const SHORTCUT_TIP_STORAGE_KEY = "notra.shortcutTip.v1";
+
+function maybeShowShortcutTip() {
+  try {
+    if (window.localStorage.getItem(SHORTCUT_TIP_STORAGE_KEY) === "1") return;
+  } catch {
+    return;
+  }
+  const tip = $("shortcutTip");
+  if (!tip) return;
+  const label = (id: string, fallback: string) => {
+    const binding = activeCommandBindings(id)[0];
+    return binding ? bindingLabel(binding) : fallback;
+  };
+  $("shortcutTipText").textContent = [
+    `查找 ${label("search.find", "⌘F")}`,
+    `替换 ${label("search.replace", "⌘H")}`,
+    `工作区查找 ${label("search.workspaceFind", "⌘⇧F")}`,
+    `格式化 ${label("editor.formatDocument", "⇧⌥F")}`,
+    `命令面板 ${label("navigation.commandPalette", "⌘⇧P")}`,
+  ].join(" · ");
+  tip.classList.remove("hidden");
+  $<HTMLButtonElement>("shortcutTipDismiss").onclick = () => {
+    tip.classList.add("hidden");
+    try {
+      window.localStorage.setItem(SHORTCUT_TIP_STORAGE_KEY, "1");
+    } catch {
+      /* ignore quota */
+    }
+  };
 }
 
 function bindTabScroller() {
@@ -1615,8 +1650,9 @@ function markdownCommand(id: string, title: string, action: string, when: () => 
 }
 
 function bindKeybindings() {
-  $("editor").addEventListener("keydown", handleEditorKeybinding, true);
-  $("markdownWysiwyg").addEventListener("keydown", handleEditorKeybinding, true);
+  // Capture at document so shortcuts work outside Monaco (sidebar, empty chrome).
+  // Editor surfaces still win when focused; editable fields only get allowInInput commands.
+  document.addEventListener("keydown", handleAppKeybinding, true);
 }
 
 const NATIVE_CLIPBOARD_SHORTCUTS = new globalThis.Map([
@@ -1625,12 +1661,32 @@ const NATIVE_CLIPBOARD_SHORTCUTS = new globalThis.Map([
   ["Ctrl+V", "edit.paste"],
 ]);
 
-function handleEditorKeybinding(event: KeyboardEvent) {
+function isEditorKeybindingSurface(target: EventTarget | null) {
+  if (!(target instanceof Element)) return false;
+  return Boolean(
+    target.closest("#editor")
+    || target.closest("#markdownWysiwyg")
+    || target.closest(".monaco-editor"),
+  );
+}
+
+function isEditableFieldTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) return false;
+  if (isEditorKeybindingSurface(target)) return false;
+  if (target.isContentEditable) return true;
+  const tag = target.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+}
+
+function handleAppKeybinding(event: KeyboardEvent) {
+  if (recordingKeybindingCommandId) return;
+  if (event.defaultPrevented) return;
   const stroke = keyboardEventStroke(event);
   if (!stroke) return;
+  const targetIsInput = isEditableFieldTarget(event.target);
   const chord = pendingKeybindingChord ? `${pendingKeybindingChord} ${stroke}` : stroke;
-  const exact = matchingCommands(chord, false);
-  const prefix = hasMatchingChordPrefix(chord, false);
+  const exact = matchingCommands(chord, targetIsInput);
+  const prefix = hasMatchingChordPrefix(chord, targetIsInput);
   if (usesNativeClipboardShortcut(stroke, exact[0])) {
     clearPendingKeybindingChord();
     return;
@@ -1650,7 +1706,7 @@ function handleEditorKeybinding(event: KeyboardEvent) {
   }
   if (pendingKeybindingChord) {
     clearPendingKeybindingChord();
-    const standalone = matchingCommands(stroke, false);
+    const standalone = matchingCommands(stroke, targetIsInput);
     if (usesNativeClipboardShortcut(stroke, standalone[0])) return;
     if (standalone.length > 0) {
       event.preventDefault();
@@ -1658,6 +1714,10 @@ function handleEditorKeybinding(event: KeyboardEvent) {
       void executeAppCommand(standalone[0]);
     }
   }
+}
+
+function handleEditorKeybinding(event: KeyboardEvent) {
+  handleAppKeybinding(event);
 }
 
 function usesNativeClipboardShortcut(stroke: string, command: AppCommand | undefined) {
@@ -7707,15 +7767,6 @@ async function formatActiveDocument() {
   }
 
   const before = doc.model.getValue();
-  if (doc.language === "json" && before.trim()) {
-    try {
-      JSON.parse(before);
-    } catch (error) {
-      log(`JSON 格式化失败：${error instanceof Error ? error.message : String(error)}`);
-      return;
-    }
-  }
-
   if (!before.trim()) {
     log(`${languageLabel(doc.language)} 已是规范格式`);
     return;
@@ -7730,13 +7781,21 @@ async function formatActiveDocument() {
         { lockEditor: false },
       );
       replaceModelText(doc.model, normalizeFormattedText(formatted, doc.model));
-    } else if (doc.language === "json" && !action?.isSupported()) {
-      const options = doc.model.getOptions();
-      const indentation = options.insertSpaces ? options.tabSize : "\t";
-      const formatted = JSON.stringify(JSON.parse(before), null, indentation);
-      replaceModelText(doc.model, normalizeFormattedText(formatted, doc.model));
+    } else if (doc.language === "json") {
+      try {
+        const options = doc.model.getOptions();
+        const indentation = options.insertSpaces ? options.tabSize : "\t";
+        const formatted = JSON.stringify(JSON.parse(before), null, indentation);
+        replaceModelText(doc.model, normalizeFormattedText(formatted, doc.model));
+      } catch (error) {
+        log(`JSON 格式化失败：${error instanceof Error ? error.message : String(error)}`);
+        return;
+      }
+    } else if (action?.isSupported()) {
+      await action.run();
     } else {
-      await action?.run();
+      log(`${languageLabel(doc.language)} 暂无可用格式化器`);
+      return;
     }
     editor.focus();
     const label = languageLabel(doc.language);
@@ -7873,7 +7932,10 @@ function setKeymapProfile(value: string) {
 function keymapProfileDetail() {
   if (state.keymapProfile === "adaptive") {
     const resolved = resolveKeymapProfile(state.keymapProfile, state.mode);
-    return `当前${state.mode === "workspace" ? "工作区" : "单文件"}模式使用 ${KEYMAP_PROFILE_LABELS[resolved]} 键位`;
+    return `跟随模式当前解析为 ${KEYMAP_PROFILE_LABELS[resolved]}（面向文本工作流的默认键位）`;
+  }
+  if (state.keymapProfile === "notra") {
+    return "默认方案：查找/替换/格式化等单键优先，macOS 上 ⌘ 生效";
   }
   return `工作区和单文件统一使用 ${KEYMAP_PROFILE_LABELS[state.keymapProfile]} 键位`;
 }
@@ -8351,7 +8413,7 @@ async function restoreSession() {
     state.editorFontMode = normalizeFontMode(snapshot.editorFontMode, state.editorFontMode);
     state.editorFontPreset = isEditorFontPreset(snapshot.editorFontPreset) ? snapshot.editorFontPreset : state.editorFontPreset;
     state.editorFontCustom = normalizeFontStack(snapshot.editorFontCustom, state.editorFontCustom);
-    state.keymapProfile = isKeymapProfile(snapshot.keymapProfile) ? snapshot.keymapProfile : "vscode";
+    state.keymapProfile = isKeymapProfile(snapshot.keymapProfile) ? snapshot.keymapProfile : "notra";
     state.keybindingOverrides = normalizeKeybindingOverrides(snapshot.keybindingOverrides);
     state.bookmarks = normalizeBookmarkSnapshot(snapshot.bookmarks);
     applyShellFontSettings();

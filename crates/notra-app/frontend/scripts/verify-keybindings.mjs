@@ -14,6 +14,7 @@ const javascript = ts.transpileModule(source, {
 const keybindings = await import(`data:text/javascript;base64,${Buffer.from(javascript).toString("base64")}`);
 
 const profiles = [
+  ["Notra", keybindings.NOTRA_KEYMAP],
   ["VS Code", keybindings.VSCODE_KEYMAP],
   ["Notepad++", keybindings.NOTEPAD_PLUS_PLUS_KEYMAP],
 ];
@@ -23,32 +24,38 @@ const implementedCommands = new Set(
 const failures = [];
 let testedStrokes = 0;
 
-if (!mainSource.includes('$("editor").addEventListener("keydown", handleEditorKeybinding, true)')) {
-  failures.push("Monaco 编辑器没有注册局部快捷键监听");
-}
-if (!mainSource.includes('$("markdownWysiwyg").addEventListener("keydown", handleEditorKeybinding, true)')) {
-  failures.push("Markdown 即时编辑器没有注册局部快捷键监听");
+if (!mainSource.includes('document.addEventListener("keydown", handleAppKeybinding, true)')) {
+  failures.push("应用快捷键没有注册到 document 捕获阶段");
 }
 if (/document\.addEventListener\("keydown",\s*handleEditorKeybinding/.test(mainSource)) {
-  failures.push("编辑器快捷键不得注册到 document");
+  failures.push("旧的 handleEditorKeybinding 不应直接挂到 document");
 }
 const editorKeybindingHandler = mainSource.slice(
-  mainSource.indexOf("function handleEditorKeybinding"),
+  mainSource.indexOf("function handleAppKeybinding"),
   mainSource.indexOf("function matchingCommands"),
 );
 const nativeClipboardGuardIndexes = [...editorKeybindingHandler.matchAll(/usesNativeClipboardShortcut\(stroke, (?:exact|standalone)\[0\]\)/g)]
   .map((match) => match.index);
 const shortcutPreventDefaultIndex = editorKeybindingHandler.indexOf("event.preventDefault()");
 if (
-  !mainSource.includes('["Ctrl+C", "edit.copy"]') ||
-  !mainSource.includes('["Ctrl+X", "edit.cut"]') ||
-  !mainSource.includes('["Ctrl+V", "edit.paste"]') ||
-  !mainSource.includes("NATIVE_CLIPBOARD_SHORTCUTS.get(stroke) === command?.id") ||
-  nativeClipboardGuardIndexes.length !== 2 ||
-  shortcutPreventDefaultIndex < 0 ||
-  nativeClipboardGuardIndexes[0] > shortcutPreventDefaultIndex
+  !mainSource.includes('["Ctrl+C", "edit.copy"]')
+  || !mainSource.includes('["Ctrl+X", "edit.cut"]')
+  || !mainSource.includes('["Ctrl+V", "edit.paste"]')
+  || !mainSource.includes("NATIVE_CLIPBOARD_SHORTCUTS.get(stroke) === command?.id")
+  || nativeClipboardGuardIndexes.length !== 2
+  || shortcutPreventDefaultIndex < 0
+  || nativeClipboardGuardIndexes[0] > shortcutPreventDefaultIndex
 ) {
   failures.push("编辑器原生剪贴板快捷键没有覆盖普通按键和组合键回退");
+}
+if (!mainSource.includes("maybeShowShortcutTip")) {
+  failures.push("缺少首次快捷键提示 maybeShowShortcutTip");
+}
+if (!htmlSource.includes('id="shortcutTip"') || !htmlSource.includes('data-value="notra"')) {
+  failures.push("缺少 Notra 键位方案或快捷键提示 UI");
+}
+if (!mainSource.includes('keymapProfile: "notra"')) {
+  failures.push("默认键位方案不是 Notra");
 }
 if (!/if \(scope === "workspace" \|\| showPanel\)/.test(mainSource)) {
   failures.push("当前文件全部查找没有打开右侧结果面板");
@@ -103,7 +110,7 @@ for (const [profileName, profile] of profiles) {
           metaKey: modifiers.has("Meta"),
           isComposing: false,
         };
-        const actual = keybindings.keyboardEventStroke(event);
+        const actual = keybindings.keyboardEventStroke(event, "Win32");
         if (actual !== stroke) failures.push(`${profileName}: ${commandId} 的 ${stroke} 被解析为 ${actual}`);
         testedStrokes += 1;
       }
@@ -115,9 +122,13 @@ for (const [profileName, profile] of profiles) {
       "Ctrl+B:markdown.bold,view.toggleExplorer",
       "Ctrl+0:markdown.paragraph,view.zoomReset",
     ])
-    : new Set([
+    : profileName === "Notepad++"
+    ? new Set([
       "Ctrl+B:editor.goToBracket,markdown.bold",
       "Ctrl+0:markdown.paragraph,view.zoomReset",
+    ])
+    : new Set([
+      "Ctrl+B:markdown.bold,view.toggleExplorer",
     ]);
   for (const [binding, commandIds] of commandsByBinding) {
     if (commandIds.length < 2) continue;
@@ -145,6 +156,21 @@ for (const [profileName, profile] of profiles) {
   }
 }
 
+const appleFind = keybindings.keyboardEventStroke({
+  key: "f",
+  ctrlKey: false,
+  shiftKey: false,
+  altKey: false,
+  metaKey: true,
+  isComposing: false,
+}, "MacIntel");
+if (appleFind !== "Ctrl+F") failures.push(`macOS ⌘F 应映射为 Ctrl+F，实际为 ${appleFind}`);
+
+const appleLabel = keybindings.bindingLabel("Ctrl+Shift+F", "MacIntel");
+if (!appleLabel.includes("⌘") || !appleLabel.includes("⇧")) {
+  failures.push(`macOS 快捷键标签异常：${appleLabel}`);
+}
+
 const monacoRoot = new URL("../node_modules/monaco-editor/esm/vs/editor/", import.meta.url);
 const monacoSources = readJavaScriptTree(monacoRoot);
 const monacoActionIds = new Set([
@@ -157,18 +183,21 @@ for (const actionId of monacoActionIds) {
   }
 }
 
-if (keybindings.resolveKeymapProfile("adaptive", "workspace") !== "vscode") {
-  failures.push("跟随模式在工作区中未解析为 VS Code");
+if (keybindings.resolveKeymapProfile("adaptive", "workspace") !== "notra") {
+  failures.push("跟随模式在工作区中未解析为 Notra");
 }
-if (keybindings.resolveKeymapProfile("adaptive", "single") !== "notepad-plus-plus") {
-  failures.push("跟随模式在单文件模式中未解析为 Notepad++");
+if (keybindings.resolveKeymapProfile("adaptive", "single") !== "notra") {
+  failures.push("跟随模式在单文件模式中未解析为 Notra");
+}
+if (!keybindings.isKeymapProfile("notra")) {
+  failures.push("isKeymapProfile 未识别 notra");
 }
 
 if (failures.length > 0) {
   console.error(failures.join("\n"));
   process.exitCode = 1;
 } else {
-  console.log(`快捷键验证通过：2 套键位，${testedStrokes} 个按键 stroke，${monacoActionIds.size} 个 Monaco action。`);
+  console.log(`快捷键验证通过：${profiles.length} 套键位，${testedStrokes} 个按键 stroke，${monacoActionIds.size} 个 Monaco action。`);
 }
 
 function readJavaScriptTree(url) {

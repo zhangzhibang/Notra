@@ -5436,3 +5436,60 @@ tbody tr.result-active {
     }
   }
 }
+
+.shortcut-tip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border, rgba(15, 23, 42, 0.08));
+  background: color-mix(in srgb, var(--accent, #2563eb) 10%, var(--panel, #f8fafc));
+  color: var(--text, #0f172a);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.shortcut-tip.hidden {
+  display: none;
+}
+
+.shortcut-tip-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 12px;
+  min-width: 0;
+}
+
+.shortcut-tip-body strong {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.shortcut-tip-body span {
+  color: var(--muted, #475569);
+}
+
+.shortcut-tip-dismiss {
+  flex: 0 0 auto;
+  border: 1px solid var(--border, rgba(15, 23, 42, 0.12));
+  border-radius: 6px;
+  background: var(--panel, #fff);
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.shortcut-tip-dismiss:hover {
+  border-color: var(--accent, #2563eb);
+  color: var(--accent, #2563eb);
+}
+
+.keymap-profile-control.wide {
+  flex-wrap: wrap;
+  max-width: 420px;
+}
