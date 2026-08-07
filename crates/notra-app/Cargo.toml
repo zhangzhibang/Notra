@@ -11,6 +11,9 @@ name = "notra"
 path = "src/main.rs"
 
 [features]
+# release / bundle 需要 custom-protocol；Tauri CLI 可能只传 tauri/custom-protocol，
+# 因此作为 default，避免 release 被 compile_error 拦住。
+default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
 
 [dependencies]
