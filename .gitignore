@@ -14,3 +14,4 @@ node_modules/
 *.swp
 Thumbs.db
 desktop.ini
+testdata/
