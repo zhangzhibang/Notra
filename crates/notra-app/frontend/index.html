@@ -14,8 +14,12 @@
       }
 
       body {
-        background: #e8eef6;
+        background: #e7edf6;
         overflow: hidden;
+      }
+
+      body.dark {
+        background: #0d121a;
       }
 
       body.booting #app {
@@ -29,26 +33,57 @@
         display: grid;
         place-items: center;
         color: #334155;
-        background: #e8eef6;
-        font: 600 13px "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", Arial, sans-serif;
+        background:
+          radial-gradient(800px 360px at 50% 30%, rgba(58, 65, 217, 0.12), transparent 65%),
+          #e7edf6;
+        font: 650 13px "LXGW WenKai", "霞鹜文楷", "Segoe UI", "Microsoft YaHei UI", sans-serif;
+        letter-spacing: 0.02em;
+      }
+
+      body.dark .boot-splash {
+        color: #c5cfde;
+        background:
+          radial-gradient(800px 360px at 50% 30%, rgba(154, 161, 255, 0.14), transparent 65%),
+          #0d121a;
       }
 
       .boot-card {
         display: grid;
         justify-items: center;
-        gap: 12px;
+        gap: 14px;
+        padding: 28px 36px;
+        border-radius: 18px;
+        border: 1px solid rgba(148, 163, 184, 0.28);
+        background: rgba(255, 255, 255, 0.9);
+        box-shadow: 0 24px 56px rgba(15, 23, 42, 0.12);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+      }
+
+      body.dark .boot-card {
+        border-color: rgba(148, 163, 184, 0.18);
+        background: rgba(26, 34, 48, 0.9);
+        box-shadow: 0 28px 64px rgba(0, 0, 0, 0.4);
       }
 
       .boot-mark {
-        width: 34px;
-        height: 34px;
-        border-radius: 8px;
+        width: 40px;
+        height: 40px;
+        border-radius: 12px;
         display: block;
         object-fit: contain;
+        box-shadow: 0 8px 24px rgba(58, 65, 217, 0.18);
       }
 
       body:not(.booting) .boot-splash {
         display: none;
+      }
+      .boot-splash {
+        transition: opacity 160ms ease, visibility 160ms ease;
+      }
+      body.booting .boot-splash {
+        opacity: 1;
+        visibility: visible;
       }
     </style>
   </head>
@@ -58,6 +93,14 @@
         <img class="boot-mark" src="/icon.png" alt="" />
         <div>正在启动 Notra</div>
       </div>
+    <script>
+      window.setTimeout(function () {
+        if (!document.body.classList.contains("booting")) return;
+        document.body.classList.remove("booting");
+        var splash = document.getElementById("bootSplash");
+        if (splash) splash.remove();
+      }, 4000);
+    </script>
     </div>
     <main id="app">
       <header class="titlebar" id="windowTitlebar">
@@ -119,38 +162,64 @@
       </header>
 
       <nav class="toolbar">
-        <div class="tool-group primary-actions" aria-label="常用工具">
-          <button class="tool-button" id="newButton" aria-label="新建 Ctrl+N" title="新建 Ctrl+N" aria-keyshortcuts="Control+N"><span class="icon-slot" data-icon="FilePlus2"></span><span data-label>新建</span></button>
-          <button class="tool-button" id="openButton" aria-label="打开文件 Ctrl+O" title="打开文件 Ctrl+O" aria-keyshortcuts="Control+O"><span class="icon-slot" data-icon="FolderOpen"></span><span data-label>打开文件</span></button>
-          <button class="tool-button" id="workspaceButton" aria-label="打开工作区" title="打开工作区"><span class="icon-slot" data-icon="FolderTree"></span><span data-label>打开工作区</span></button>
-          <button class="tool-button" id="recentButton" data-menu-trigger aria-label="最近打开" title="最近打开" aria-haspopup="menu"><span class="icon-slot" data-icon="History"></span><span data-label>最近打开</span></button>
-          <span class="tool-divider"></span>
-          <button class="tool-button" id="saveButton" aria-label="保存 Ctrl+S" title="保存 Ctrl+S" aria-keyshortcuts="Control+S"><span class="icon-slot" data-icon="Save"></span><span data-label>保存</span></button>
-          <button class="tool-button" id="saveAllButton" aria-label="保存全部" title="保存全部"><span class="icon-slot" data-icon="SaveAll"></span><span data-label>保存全部</span></button>
-          <button class="tool-button" id="saveAsButton" aria-label="另存为 Ctrl+Shift+S" title="另存为 Ctrl+Shift+S" aria-keyshortcuts="Control+Shift+S"><span class="icon-slot" data-icon="SavePlus"></span><span data-label>另存为</span></button>
-          <span class="tool-divider"></span>
-          <button class="tool-button" id="undoButton" aria-label="撤销" title="撤销"><span class="icon-slot" data-icon="Undo2"></span><span data-label>撤销</span></button>
-          <button class="tool-button" id="redoButton" aria-label="重做" title="重做"><span class="icon-slot" data-icon="Redo2"></span><span data-label>重做</span></button>
-          <button class="tool-button" id="uppercaseButton" aria-label="转为大写" title="转为大写"><span class="icon-slot" data-icon="CaseUpper"></span><span data-label>转为大写</span></button>
-          <button class="tool-button" id="lowercaseButton" aria-label="转为小写" title="转为小写"><span class="icon-slot" data-icon="CaseLower"></span><span data-label>转为小写</span></button>
-          <button class="tool-button" id="formatDocumentButton" aria-label="格式化文档 Shift+Alt+F" title="格式化文档 Shift+Alt+F" aria-keyshortcuts="Shift+Alt+F"><span class="icon-slot" data-icon="Braces"></span><span data-label>格式化文档</span></button>
-          <button class="tool-button" id="toolboxButton" aria-label="工具箱" title="工具箱"><span class="icon-slot" data-icon="Wrench"></span><span data-label>工具箱</span></button>
-          <span class="tool-divider"></span>
-          <button class="tool-button" id="findButton" aria-label="查找 Ctrl+F" title="查找 Ctrl+F" aria-keyshortcuts="Control+F"><span class="icon-slot" data-icon="Search"></span><span data-label>查找</span></button>
-          <button class="tool-button" id="replaceButton" aria-label="替换 Ctrl+H" title="替换 Ctrl+H" aria-keyshortcuts="Control+H"><span class="icon-slot" data-icon="Replace"></span><span data-label>替换</span></button>
-          <button class="tool-button" id="workspaceFindToolButton" aria-label="在文件中查找" title="在文件中查找"><span class="icon-slot" data-icon="FileSearch"></span><span data-label>文件查找</span></button>
-          <button class="tool-button" id="batchEditButton" data-menu-trigger aria-label="批量改行" title="批量改行" aria-haspopup="menu" aria-controls="batchEditMenu" aria-expanded="false"><span class="icon-slot" data-icon="ListTree"></span><span data-label>批量改行</span></button>
-          <button class="tool-button" id="compareDiskButton" aria-label="与磁盘版本对比" title="与磁盘版本对比"><span class="icon-slot" data-icon="Columns2"></span><span data-label>对比磁盘</span></button>
-          <button class="tool-button" id="compareOpenTabButton" aria-label="与已打开标签对比" title="与已打开标签对比"><span class="icon-slot" data-icon="Files"></span><span data-label>对比标签</span></button>
-          <button class="tool-button" id="goToLineButton" aria-label="跳转到行 Ctrl+G" title="跳转到行 Ctrl+G" aria-keyshortcuts="Control+G"><span class="icon-slot" data-icon="ListRestart"></span><span data-label>跳转到行</span></button>
-          <button class="tool-button" id="commandButton" aria-label="命令面板 Ctrl+P" title="命令面板 Ctrl+P" aria-keyshortcuts="Control+P"><span class="icon-slot" data-icon="Command"></span><span data-label>命令面板</span></button>
-          <span class="tool-divider"></span>
-          <button class="tool-button" id="wordWrapButton" aria-label="自动换行" title="自动换行" aria-pressed="false"><span class="icon-slot" data-icon="WrapText"></span><span data-label>自动换行</span></button>
-          <div class="markdown-mode-control hidden" id="markdownModeControl" role="group" aria-label="Markdown 编辑模式">
+        <div class="tool-group primary-actions" id="toolbarPrimaryActions" aria-label="常用工具">
+          <!-- data-toolbar-rank: 0=常驻 越高越先收进「更多」 -->
+          <!-- ①文件区 -->
+          <button class="tool-button" id="newButton" data-toolbar-rank="0" aria-label="新建 Ctrl+N" title="新建 Ctrl+N" aria-keyshortcuts="Control+N"><span class="icon-slot" data-icon="FilePlus2"></span><span data-label>新建</span></button>
+          <button class="tool-button" id="openButton" data-toolbar-rank="0" aria-label="打开文件 Ctrl+O" title="打开文件 Ctrl+O" aria-keyshortcuts="Control+O"><span class="icon-slot" data-icon="FolderOpen"></span><span data-label>打开文件</span></button>
+          <button class="tool-button" id="workspaceButton" data-toolbar-rank="2" aria-label="打开工作区" title="打开工作区"><span class="icon-slot" data-icon="FolderTree"></span><span data-label>打开工作区</span></button>
+          <button class="tool-button" id="recentButton" data-toolbar-rank="2" data-menu-trigger aria-label="最近打开" title="最近打开" aria-haspopup="menu"><span class="icon-slot" data-icon="History"></span><span data-label>最近打开</span></button>
+          <span class="tool-divider" data-toolbar-divider></span>
+          <!-- ②保存区 -->
+          <button class="tool-button" id="saveButton" data-toolbar-rank="0" aria-label="保存 Ctrl+S" title="保存 Ctrl+S" aria-keyshortcuts="Control+S"><span class="icon-slot" data-icon="Save"></span><span data-label>保存</span></button>
+          <button class="tool-button" id="saveAllButton" data-toolbar-rank="3" aria-label="保存全部" title="保存全部"><span class="icon-slot" data-icon="SaveAll"></span><span data-label>保存全部</span></button>
+          <button class="tool-button" id="saveAsButton" data-toolbar-rank="3" aria-label="另存为 Ctrl+Shift+S" title="另存为 Ctrl+Shift+S" aria-keyshortcuts="Control+Shift+S"><span class="icon-slot" data-icon="SavePlus"></span><span data-label>另存为</span></button>
+          <span class="tool-divider" data-toolbar-divider></span>
+          <!-- ③编辑区 -->
+          <button class="tool-button" id="undoButton" data-toolbar-rank="0" aria-label="撤销" title="撤销"><span class="icon-slot" data-icon="Undo2"></span><span data-label>撤销</span></button>
+          <button class="tool-button" id="redoButton" data-toolbar-rank="0" aria-label="重做" title="重做"><span class="icon-slot" data-icon="Redo2"></span><span data-label>重做</span></button>
+          <button class="tool-button" id="uppercaseButton" data-toolbar-rank="4" aria-label="转为大写" title="转为大写"><span class="icon-slot" data-icon="CaseUpper"></span><span data-label>转为大写</span></button>
+          <button class="tool-button" id="lowercaseButton" data-toolbar-rank="4" aria-label="转为小写" title="转为小写"><span class="icon-slot" data-icon="CaseLower"></span><span data-label>转为小写</span></button>
+          <span class="tool-divider" data-toolbar-divider></span>
+          <!-- ④转换/工具区 -->
+          <button class="tool-button" id="formatDocumentButton" data-toolbar-rank="0" aria-label="格式化文档 Shift+Alt+F" title="格式化文档（JSON/SQL/XML/HTML 按语言） Shift+Alt+F" aria-keyshortcuts="Shift+Alt+F"><span class="icon-slot" data-icon="Braces"></span><span data-label>格式化文档</span></button>
+          <button class="tool-button" id="minifyDocumentButton" data-toolbar-rank="2" aria-label="压缩文档" title="压缩文档（JSON/XML/HTML）"><span class="icon-slot" data-icon="Minimize2"></span><span data-label>压缩文档</span></button>
+          <button class="tool-button" id="jsonRepairButton" data-toolbar-rank="1" aria-label="语法修复" title="修复 JSON/JS 对象语法（尾逗号/单引号/注释等）"><span class="icon-slot" data-icon="Stethoscope"></span><span data-label>语法修复</span></button>
+          <button class="tool-button" id="validateSyntaxButton" data-toolbar-rank="2" aria-label="语法校验" title="语法校验（按当前语言：JSON/SQL/XML/HTML）"><span class="icon-slot" data-icon="ShieldCheck"></span><span data-label>语法校验</span></button>
+          <button class="tool-button" id="toolboxButton" data-toolbar-rank="0" aria-label="工具箱" title="工具箱"><span class="icon-slot" data-icon="Wrench"></span><span data-label>工具箱</span></button>
+          <span class="tool-divider" data-toolbar-divider aria-hidden="true"></span>
+          <!-- ⑤智能快捷工具（动态）-->
+          <span class="toolbar-scope-badge hidden" id="toolbarScopeBadge" aria-live="polite"></span>
+          <div class="toolbox-quick" id="toolboxQuickGroup" data-toolbar-rank="1" role="group" aria-label="智能快捷工具">
+            <!-- 由 renderToolbarQuickTools() 按语言/内容动态填充 -->
+          </div>
+          <span class="tool-divider" data-toolbar-divider></span>
+          <!-- ⑥查找/批量区 -->
+          <button class="tool-button" id="findButton" data-toolbar-rank="0" aria-label="查找 Ctrl+F" title="查找 Ctrl+F" aria-keyshortcuts="Control+F"><span class="icon-slot" data-icon="Search"></span><span data-label>查找</span></button>
+          <button class="tool-button" id="replaceButton" data-toolbar-rank="2" aria-label="替换 Ctrl+H" title="替换 Ctrl+H" aria-keyshortcuts="Control+H"><span class="icon-slot" data-icon="Replace"></span><span data-label>替换</span></button>
+          <button class="tool-button" id="workspaceFindToolButton" data-toolbar-rank="3" aria-label="在文件中查找" title="在文件中查找"><span class="icon-slot" data-icon="FileSearch"></span><span data-label>文件查找</span></button>
+          <button class="tool-button" id="batchEditButton" data-toolbar-rank="3" data-menu-trigger aria-label="批量改行" title="批量改行" aria-haspopup="menu" aria-controls="batchEditMenu" aria-expanded="false"><span class="icon-slot" data-icon="ListTree"></span><span data-label>批量改行</span></button>
+          <button class="tool-button" id="compareDiskButton" data-toolbar-rank="4" aria-label="与磁盘版本对比" title="与磁盘版本对比"><span class="icon-slot" data-icon="HardDrive"></span><span data-label>对比磁盘</span></button>
+          <button class="tool-button" id="compareOpenTabButton" data-toolbar-rank="4" aria-label="与已打开标签对比" title="与已打开标签对比"><span class="icon-slot" data-icon="Files"></span><span data-label>对比标签</span></button>
+          <button class="tool-button" id="compareTextButton" data-toolbar-rank="1" aria-label="快速对比文本" title="快速对比两段文本（粘贴即可）"><span class="icon-slot" data-icon="Diff"></span><span data-label>对比文本</span></button>
+          <button class="tool-button" id="goToLineButton" data-toolbar-rank="4" aria-label="跳转到行 Ctrl+G" title="跳转到行 Ctrl+G" aria-keyshortcuts="Control+G"><span class="icon-slot" data-icon="ListRestart"></span><span data-label>跳转到行</span></button>
+          <button class="tool-button" id="commandButton" data-toolbar-rank="3" aria-label="命令面板 Ctrl+Shift+P" title="命令面板 Ctrl+Shift+P" aria-keyshortcuts="Control+Shift+P"><span class="icon-slot" data-icon="TerminalSquare"></span><span data-label>命令面板</span></button>
+          <span class="tool-divider" data-toolbar-divider></span>
+          <!-- ⑦视图区 -->
+          <div class="font-zoom-control" id="fontZoomControl" data-toolbar-rank="1" role="group" aria-label="编辑器字号">
+            <button class="tool-button" id="fontZoomOutButton" type="button" aria-label="缩小字号 ⌘-" title="缩小字号 ⌘-"><span class="icon-slot" data-icon="Minus"></span></button>
+            <button class="tool-button font-zoom-value" id="fontZoomValueButton" type="button" aria-label="恢复默认字号 ⌘0" title="点击恢复默认字号 ⌘0"><span data-label id="fontZoomValueLabel">14</span></button>
+            <button class="tool-button" id="fontZoomInButton" type="button" aria-label="放大字号 ⌘=" title="放大字号 ⌘="><span class="icon-slot" data-icon="Plus"></span></button>
+          </div>
+          <button class="tool-button" id="wordWrapButton" data-toolbar-rank="3" aria-label="自动换行" title="自动换行" aria-pressed="false"><span class="icon-slot" data-icon="WrapText"></span><span data-label>自动换行</span></button>
+          <div class="markdown-mode-control hidden" id="markdownModeControl" data-toolbar-rank="0" role="group" aria-label="Markdown 编辑模式">
             <button class="tool-button markdown-mode-button" id="markdownWysiwygButton" data-markdown-mode="wysiwyg" aria-label="Markdown 即时编辑" title="即时编辑"><span class="icon-slot" data-icon="NotebookPen"></span></button>
             <button class="tool-button markdown-mode-button" id="markdownSplitButton" data-markdown-mode="split" aria-label="Markdown 分屏预览" title="分屏预览"><span class="icon-slot" data-icon="Columns2"></span></button>
             <button class="tool-button markdown-mode-button" id="markdownSourceButton" data-markdown-mode="source" aria-label="Markdown 源码" title="源码"><span class="icon-slot" data-icon="FileCode2"></span></button>
           </div>
+          <button class="tool-button toolbar-overflow-button hidden" id="toolbarOverflowButton" type="button" data-menu-trigger aria-label="更多工具" title="更多工具（窗口较窄时收纳低频按钮）" aria-haspopup="menu" aria-controls="toolbarOverflowMenu" aria-expanded="false">
+            <span class="icon-slot" data-icon="MoreHorizontal"></span><span data-label>更多</span>
+          </button>
         </div>
         <header class="right-tool-tabs" id="rightToolTabs" aria-label="右侧工具">
           <button class="right-tool-tab active" id="rightSearchToolButton" data-right-tool="search"><span class="icon-slot" data-icon="Search"></span><span>文件查找</span></button>
@@ -193,6 +262,7 @@
           <button class="menu-row" id="menuUppercaseButton" role="menuitem"><span class="icon-slot" data-icon="CaseUpper"></span><strong>转为大写</strong><small></small></button>
           <button class="menu-row" id="menuLowercaseButton" role="menuitem"><span class="icon-slot" data-icon="CaseLower"></span><strong>转为小写</strong><small></small></button>
           <button class="menu-row" id="menuFormatDocumentButton" role="menuitem"><span class="icon-slot" data-icon="Braces"></span><strong>格式化文档</strong><small>Shift+Alt+F</small></button>
+          <button class="menu-row" id="menuValidateSyntaxButton" role="menuitem"><span class="icon-slot" data-icon="ShieldCheck"></span><strong>语法校验</strong><small></small></button>
           <button class="menu-row" id="menuToolboxButton" role="menuitem"><span class="icon-slot" data-icon="Wrench"></span><strong>工具箱</strong><small></small></button>
           <div class="menu-divider"></div>
           <button class="menu-row" id="menuSelectAllButton" role="menuitem"><span class="icon-slot" data-icon="Check"></span><strong>全选</strong><small>Ctrl+A</small></button>
@@ -202,13 +272,14 @@
       <section class="popover app-menu hidden" id="searchMenu" role="menu" aria-label="查找菜单">
         <div class="menu-list">
           <button class="menu-row" id="menuFindButton" role="menuitem"><span class="icon-slot" data-icon="Search"></span><strong>查找</strong><small>Ctrl+F</small></button>
-          <button class="menu-row" id="menuReplaceButton" role="menuitem"><span class="icon-slot" data-icon="Replace"></span><strong>替换</strong><small>Ctrl+H</small></button>
+          <button class="menu-row" id="menuReplaceButton" role="menuitem"><span class="icon-slot" data-icon="Replace"></span><strong>替换</strong><small>Ctrl+H / R</small></button>
           <button class="menu-row" id="menuFindWorkspaceButton" role="menuitem"><span class="icon-slot" data-icon="Files"></span><strong>在文件中查找</strong><small>Ctrl+Shift+F</small></button>
           <button class="menu-row" id="menuReplaceWorkspaceButton" role="menuitem"><span class="icon-slot" data-icon="ReplaceAll"></span><strong>在文件中替换</strong><small>Ctrl+Shift+H</small></button>
           <button class="menu-row" id="menuGoToLineButton" role="menuitem"><span class="icon-slot" data-icon="ListRestart"></span><strong>跳转到行</strong><small>Ctrl+G</small></button>
           <div class="menu-divider"></div>
-          <button class="menu-row" id="menuCompareDiskButton" role="menuitem"><span class="icon-slot" data-icon="Columns2"></span><strong>与磁盘版本对比</strong><small></small></button>
+          <button class="menu-row" id="menuCompareDiskButton" role="menuitem"><span class="icon-slot" data-icon="HardDrive"></span><strong>与磁盘版本对比</strong><small></small></button>
           <button class="menu-row" id="menuCompareFilesButton" role="menuitem"><span class="icon-slot" data-icon="Files"></span><strong>对比两个文件…</strong><small></small></button>
+          <button class="menu-row" id="menuCompareTextButton" role="menuitem"><span class="icon-slot" data-icon="GitCompareArrows"></span><strong>快速对比文本…</strong><small></small></button>
           <button class="menu-row" id="menuCompareOpenTabButton" role="menuitem"><span class="icon-slot" data-icon="Files"></span><strong>与已打开标签对比…</strong><small></small></button>
           <button class="menu-row" id="menuCloseDiffButton" role="menuitem"><span class="icon-slot" data-icon="X"></span><strong>关闭对比</strong><small>Esc</small></button>
           <div class="menu-divider"></div>
@@ -219,17 +290,23 @@
       <section class="popover app-menu hidden" id="viewMenu" role="menu" aria-label="视图菜单">
         <div class="menu-list">
           <button class="menu-row" id="menuWordWrapButton" role="menuitem"><span class="icon-slot" data-icon="WrapText"></span><strong>自动换行</strong><small></small></button>
+          <button class="menu-row" id="menuFontZoomOutButton" role="menuitem"><span class="icon-slot" data-icon="Minus"></span><strong>缩小字号</strong><small>Ctrl+-</small></button>
+          <button class="menu-row" id="menuFontZoomInButton" role="menuitem"><span class="icon-slot" data-icon="Plus"></span><strong>增大字号</strong><small>Ctrl+=</small></button>
+          <button class="menu-row" id="menuFontZoomResetButton" role="menuitem"><span class="icon-slot" data-icon="RotateCcw"></span><strong>默认字号</strong><small>Ctrl+0</small></button>
           <button class="menu-row" id="menuMarkdownWysiwygButton" role="menuitemradio"><span class="icon-slot" data-icon="NotebookPen"></span><strong>Markdown 即时编辑</strong><small></small></button>
           <button class="menu-row" id="menuMarkdownSplitButton" role="menuitemradio"><span class="icon-slot" data-icon="Columns2"></span><strong>Markdown 分屏预览</strong><small></small></button>
           <button class="menu-row" id="menuMarkdownSourceButton" role="menuitemradio"><span class="icon-slot" data-icon="FileCode2"></span><strong>Markdown 源码</strong><small></small></button>
           <button class="menu-row" id="menuOutlineButton" role="menuitem"><span class="icon-slot" data-icon="ListTree"></span><strong>Markdown 大纲</strong><small>Ctrl+Shift+O</small></button>
           <div class="menu-divider"></div>
-          <button class="menu-row" id="menuThemeButton" role="menuitem"><span class="icon-slot" data-icon="Moon"></span><strong>切换主题</strong><small></small></button>
+          <button class="menu-row" id="menuThemeButton" role="menuitem"><span class="icon-slot" data-icon="Moon"></span><strong>切换下一主题</strong><small></small></button>
         </div>
       </section>
 
       <section class="tabs" id="tabsBar">
         <div class="tabs-list" id="tabs" role="tablist" aria-label="打开的文档"></div>
+        <button class="tab-new-button" id="tabNewButton" type="button" aria-label="新建文档" title="新建文档 Ctrl+N">
+          <span class="icon-slot" data-icon="Plus"></span>
+        </button>
         <div class="tab-scroll-controls hidden" id="tabScrollControls" role="group" aria-label="标签滚动">
           <button class="tab-scroll-button" id="tabScrollLeftButton" type="button" aria-label="向左滚动标签" title="向左滚动标签">
             <span class="icon-slot" data-icon="ChevronLeft"></span>
@@ -275,14 +352,17 @@
         <section class="editor-area" id="editorArea">
           <div class="editor-wrap">
             <div class="current-find-dock hidden" id="currentFindDock">
-              <div class="current-find-bar">
+              <!-- 查找行 -->
+              <div class="current-find-row" id="currentFindRow">
+                <button id="currentFindToggleReplace" type="button" class="current-find-toggle-replace" aria-label="展开/折叠替换" title="展开替换 (⌘R)">
+                  <span class="icon-slot" data-icon="ChevronRight"></span>
+                </button>
                 <div class="current-find-query">
                   <input id="currentFindInput" autocomplete="off" aria-label="查找目标" aria-controls="currentFindHistoryMenu" aria-expanded="false" placeholder="查找" />
                   <button class="current-find-history-toggle" id="currentFindHistoryButton" type="button" aria-label="搜索历史" aria-controls="currentFindHistoryMenu" aria-expanded="false" title="搜索历史">
-                    <span class="icon-slot" data-icon="ChevronDown"></span>
+                    <span class="icon-slot" data-icon="Clock"></span>
                   </button>
                 </div>
-                <input class="hidden" id="currentReplaceInput" autocomplete="off" aria-label="替换为" placeholder="替换为" />
                 <div class="current-find-options" role="group" aria-label="查找选项">
                   <label title="匹配大小写"><input type="checkbox" id="currentMatchCaseInput" /><span>Aa</span></label>
                   <label title="全词匹配"><input type="checkbox" id="currentWholeWordInput" /><span>W</span></label>
@@ -298,12 +378,21 @@
                 </div>
                 <span class="current-find-count" id="currentFindCount">0 个结果</span>
                 <div class="current-find-actions">
-                  <button id="currentFindPreviousButton" aria-label="查找上一个" title="查找上一个"><span class="icon-slot" data-icon="ArrowUp"></span></button>
-                  <button id="currentFindNextButton" aria-label="查找下一个" title="查找下一个"><span class="icon-slot" data-icon="ArrowDown"></span></button>
+                  <button id="currentFindPreviousButton" aria-label="查找上一个" title="查找上一个 (⇧Enter)"><span class="icon-slot" data-icon="ArrowUp"></span></button>
+                  <button id="currentFindNextButton" aria-label="查找下一个" title="查找下一个 (Enter)"><span class="icon-slot" data-icon="ArrowDown"></span></button>
                   <button id="currentFindAllButton" aria-label="查找全部" title="查找全部"><span class="icon-slot" data-icon="FileSearch"></span></button>
-                  <button class="hidden" id="currentReplaceButton" aria-label="替换当前" title="替换当前"><span class="icon-slot" data-icon="Replace"></span></button>
-                  <button class="hidden" id="currentReplaceAllButton" aria-label="全部替换" title="全部替换"><span class="icon-slot" data-icon="ReplaceAll"></span></button>
-                  <button id="closeCurrentFindButton" aria-label="关闭当前文件查找" title="关闭当前文件查找"><span class="icon-slot" data-icon="X"></span></button>
+                  <button id="closeCurrentFindButton" aria-label="关闭查找栏" title="关闭 (Esc)"><span class="icon-slot" data-icon="X"></span></button>
+                </div>
+              </div>
+              <!-- 替换行（替换模式时显示） -->
+              <div class="current-replace-row hidden" id="currentReplaceRow">
+                <div class="current-find-toggle-replace current-find-toggle-spacer" aria-hidden="true"></div>
+                <div class="current-find-query">
+                  <input id="currentReplaceInput" autocomplete="off" aria-label="替换为" placeholder="替换为" />
+                </div>
+                <div class="current-replace-actions">
+                  <button id="currentReplaceButton" aria-label="替换当前" title="替换当前 (Enter)"><span class="icon-slot" data-icon="Replace"></span><span class="cfr-label">替换</span></button>
+                  <button id="currentReplaceAllButton" aria-label="全部替换" title="全部替换 (⌘Enter)"><span class="icon-slot" data-icon="ReplaceAll"></span><span class="cfr-label">全部替换</span></button>
                 </div>
               </div>
               <div class="current-find-history-menu hidden" id="currentFindHistoryMenu" role="listbox" aria-label="搜索历史"></div>
@@ -375,19 +464,24 @@
       </section>
 
       <section class="popover menu-popover hidden" id="batchEditMenu" role="menu" aria-label="批量改行">
-        <header class="popover-head">
-          <strong>批量改行</strong>
-          <span>对选中行或全文生效</span>
+        <header class="popover-head batch-edit-head">
+          <div class="batch-edit-head-text">
+            <strong>批量改行</strong>
+            <span>对选中行或全文生效</span>
+          </div>
         </header>
-        <div class="menu-list">
-          <button type="button" role="menuitem" data-batch-action="prefix-lines"><span class="icon-slot" data-icon="BetweenVerticalStart"></span><span>每行加前缀…</span></button>
-          <button type="button" role="menuitem" data-batch-action="suffix-lines"><span class="icon-slot" data-icon="BetweenVerticalEnd"></span><span>每行加后缀…</span></button>
-          <button type="button" role="menuitem" data-batch-action="trim-trailing"><span class="icon-slot" data-icon="Eraser"></span><span>删除行尾空白</span></button>
-          <button type="button" role="menuitem" data-batch-action="sort-asc"><span class="icon-slot" data-icon="ArrowUp"></span><span>按升序排列行</span></button>
-          <button type="button" role="menuitem" data-batch-action="sort-desc"><span class="icon-slot" data-icon="ArrowDown"></span><span>按降序排列行</span></button>
-          <button type="button" role="menuitem" data-batch-action="delete-empty"><span class="icon-slot" data-icon="Trash2"></span><span>删除空行</span></button>
-          <button type="button" role="menuitem" data-batch-action="duplicate-line"><span class="icon-slot" data-icon="Copy"></span><span>向下复制行</span></button>
-          <button type="button" role="menuitem" data-batch-action="select-all-occurrences"><span class="icon-slot" data-icon="Highlighter"></span><span>选中所有同词</span></button>
+        <div class="menu-list batch-edit-list">
+          <button type="button" class="menu-row" role="menuitem" data-batch-action="prefix-lines"><span class="icon-slot" data-icon="BetweenVerticalStart"></span><strong>每行加前缀…</strong><small></small></button>
+          <button type="button" class="menu-row" role="menuitem" data-batch-action="suffix-lines"><span class="icon-slot" data-icon="BetweenVerticalEnd"></span><strong>每行加后缀…</strong><small></small></button>
+          <div class="menu-divider"></div>
+          <button type="button" class="menu-row" role="menuitem" data-batch-action="trim-trailing"><span class="icon-slot" data-icon="Eraser"></span><strong>删除行尾空白</strong><small></small></button>
+          <button type="button" class="menu-row" role="menuitem" data-batch-action="delete-empty"><span class="icon-slot" data-icon="Trash2"></span><strong>删除空行</strong><small></small></button>
+          <div class="menu-divider"></div>
+          <button type="button" class="menu-row" role="menuitem" data-batch-action="sort-asc"><span class="icon-slot" data-icon="ArrowUp"></span><strong>按升序排列行</strong><small></small></button>
+          <button type="button" class="menu-row" role="menuitem" data-batch-action="sort-desc"><span class="icon-slot" data-icon="ArrowDown"></span><strong>按降序排列行</strong><small></small></button>
+          <div class="menu-divider"></div>
+          <button type="button" class="menu-row" role="menuitem" data-batch-action="duplicate-line"><span class="icon-slot" data-icon="Copy"></span><strong>向下复制行</strong><small>Shift+Alt+↓</small></button>
+          <button type="button" class="menu-row" role="menuitem" data-batch-action="select-all-occurrences"><span class="icon-slot" data-icon="Highlighter"></span><strong>选中所有同词</strong><small>Ctrl+Shift+L</small></button>
         </div>
       </section>
 
@@ -419,34 +513,43 @@
       </section>
 
       <section class="toolbox-page hidden" id="toolboxPage" aria-label="工具箱">
-        <aside class="toolbox-sidebar">
-          <header class="toolbox-sidebar-head">
-            <strong>工具箱</strong>
-            <button class="settings-close" id="toolboxCloseButton" aria-label="关闭工具箱" title="关闭工具箱">
-              <span class="icon-slot" data-icon="X"></span>
-            </button>
-          </header>
-          <nav class="toolbox-nav" id="toolboxNav" aria-label="工具分类"></nav>
-        </aside>
+        <header class="toolbox-drawer-head">
+          <div class="toolbox-drawer-title">
+            <span class="toolbox-mark" aria-hidden="true"><span class="icon-slot" data-icon="Wrench"></span></span>
+            <div class="toolbox-drawer-copy">
+              <strong>工具箱</strong>
+              <span>选区 / 全文 / 查找命中 · 先预览再应用</span>
+            </div>
+          </div>
+          <div class="toolbox-scope" role="group" aria-label="作用范围">
+            <button type="button" class="seg active" data-toolbox-scope="selection">选区</button>
+            <button type="button" class="seg" data-toolbox-scope="file">全文</button>
+            <button type="button" class="seg" data-toolbox-scope="matches" title="对查找栏命中的每处文本分别应用（需先查找）">命中</button>
+          </div>
+          <button class="settings-close toolbox-close" id="toolboxCloseButton" aria-label="关闭工具箱" title="关闭工具箱 Esc">
+            <span class="icon-slot" data-icon="X"></span>
+          </button>
+        </header>
         <div class="toolbox-main">
-          <header class="toolbox-main-head">
-            <div>
-              <strong id="toolboxCategoryTitle">常用配方</strong>
-              <span id="toolboxCategoryDesc">把常用文本操作收成一键配方</span>
+          <!-- 顶部分类标签页 -->
+          <nav class="toolbox-tabs" id="toolboxNav" role="tablist" aria-label="分类"></nav>
+          <!-- 下方内容区 -->
+          <div class="toolbox-content">
+            <!-- 左：工具列表 -->
+            <div class="toolbox-list-pane">
+              <div class="toolbox-list-head">
+                <strong id="toolboxCategoryTitle">常用配方</strong>
+                <span id="toolboxCategoryDesc">选择工具后预览再应用</span>
+              </div>
+              <div class="toolbox-list" id="toolboxList"></div>
+              <div class="toolbox-pinned" id="toolboxPinned" aria-label="最近与收藏"></div>
             </div>
-            <div class="toolbox-scope" role="group" aria-label="作用范围">
-              <button type="button" class="seg active" data-toolbox-scope="selection">选区</button>
-              <button type="button" class="seg" data-toolbox-scope="file">当前文件</button>
-              <button type="button" class="seg" data-toolbox-scope="matches">查找命中</button>
-            </div>
-          </header>
-          <div class="toolbox-body">
-            <div class="toolbox-list" id="toolboxList"></div>
+            <!-- 右：预览区 -->
             <section class="toolbox-preview-pane" aria-label="工具预览">
-              <header>
-                <strong>预览</strong>
+              <div class="toolbox-preview-head">
+                <strong id="toolboxSelectedTitle">预览</strong>
                 <span id="toolboxPreviewMeta">选择一个工具</span>
-              </header>
+              </div>
               <div class="toolbox-params hidden" id="toolboxParams">
                 <label class="toolbox-param" id="toolboxPrefixField">
                   <span>前缀</span>
@@ -465,15 +568,27 @@
                   <input id="toolboxColumnInput" type="number" min="1" value="1" />
                 </label>
                 <label class="toolbox-param" id="toolboxPathField">
-                  <span>JSON 路径</span>
+                  <span id="toolboxPathLabel">JSON 路径</span>
                   <input id="toolboxPathInput" type="text" placeholder="例如 data.items.0.id" />
                 </label>
+                <label class="toolbox-param" id="toolboxPatternField">
+                  <span>正则</span>
+                  <input id="toolboxPatternInput" type="text" placeholder="例如 (\w+)=(\d+)" spellcheck="false" />
+                </label>
+                <label class="toolbox-param" id="toolboxFlagsField">
+                  <span>标志</span>
+                  <input id="toolboxFlagsInput" type="text" placeholder="gim" value="g" spellcheck="false" />
+                </label>
+                <label class="toolbox-param" id="toolboxCountField">
+                  <span id="toolboxCountLabel">数量</span>
+                  <input id="toolboxCountInput" type="number" min="1" max="200" value="1" />
+                </label>
               </div>
-              <textarea id="toolboxPreview" readonly spellcheck="false" placeholder="预览结果会显示在这里"></textarea>
+              <textarea id="toolboxPreview" readonly spellcheck="false" placeholder="点击左侧工具预览结果…"></textarea>
               <div class="toolbox-actions">
-                <button type="button" class="tool-button" id="toolboxPreviewButton"><span class="icon-slot" data-icon="Search"></span><span>生成预览</span></button>
-                <button type="button" class="tool-button primary" id="toolboxApplyButton"><span class="icon-slot" data-icon="Check"></span><span>应用到编辑器</span></button>
-                <button type="button" class="tool-button" id="toolboxCopyButton"><span class="icon-slot" data-icon="Copy"></span><span>复制预览</span></button>
+                <button type="button" class="tool-button" id="toolboxPreviewButton" title="预览结果（不写入文档）"><span class="icon-slot" data-icon="Search"></span><span>预览</span></button>
+                <button type="button" class="tool-button primary" id="toolboxApplyButton" title="应用写入文档（双击列表项也可应用）"><span class="icon-slot" data-icon="Check"></span><span>应用写入</span></button>
+                <button type="button" class="tool-button" id="toolboxCopyButton" title="复制预览结果到剪贴板"><span class="icon-slot" data-icon="Copy"></span><span>复制结果</span></button>
               </div>
             </section>
           </div>
@@ -502,8 +617,8 @@
               <strong>快捷键</strong>
             </button>
             <button class="settings-nav-item" data-settings-section="workspace">
-              <span class="icon-slot" data-icon="FolderTree"></span>
-              <strong>工作区</strong>
+              <span class="icon-slot" data-icon="FileText"></span>
+              <strong>文档</strong>
             </button>
             <button class="settings-nav-item" data-settings-section="system">
               <span class="icon-slot" data-icon="MonitorCog"></span>
@@ -530,27 +645,10 @@
         <section class="settings-content">
           <section class="settings-panel active" data-settings-panel="appearance">
             <header class="settings-section-head">
-              <strong>主题</strong>
-              <span>浅色优先，深色作为快速切换</span>
+              <strong>主题 / 皮肤</strong>
+              <span>不只换色：布局、圆角、毛玻璃、浮层都会变（灵感来自 Obsidian）</span>
             </header>
-            <div class="theme-grid">
-              <button class="theme-card" id="settingsThemeLight">
-                <span class="theme-swatches">
-                  <i></i><i></i><i></i>
-                </span>
-                <strong>晨光</strong>
-                <span>Light · 明亮清爽</span>
-                <em>当前</em>
-              </button>
-              <button class="theme-card" id="settingsThemeDark">
-                <span class="theme-swatches dark-swatch">
-                  <i></i><i></i><i></i>
-                </span>
-                <strong>夜航</strong>
-                <span>Dark · 低亮编辑</span>
-                <em>当前</em>
-              </button>
-            </div>
+            <div class="theme-grid" id="settingsThemeGrid" role="listbox" aria-label="选择主题"></div>
 
             <header class="settings-section-head compact">
               <strong>字体与显示</strong>
@@ -576,10 +674,11 @@
                   </div>
                   <div class="font-dropdown" id="settingsShellFontPresetWrap">
                     <button class="font-select-trigger" id="settingsShellFontPresetButton" type="button" data-font-dropdown-trigger="settingsShellFontPresetMenu" aria-haspopup="menu" aria-expanded="false">
-                      <span id="settingsShellFontPresetLabel">系统默认</span>
+                      <span id="settingsShellFontPresetLabel">霞鹜文楷</span>
                       <span class="icon-slot font-select-chevron" data-icon="ChevronDown"></span>
                     </button>
                     <div class="font-dropdown-menu hidden" id="settingsShellFontPresetMenu" role="menu">
+                      <button type="button" data-value="lxgwWenKai" role="menuitem"><span>霞鹜文楷</span><span class="icon-slot font-option-check" data-icon="Check"></span></button>
                       <button type="button" data-value="system" role="menuitem"><span>系统默认</span><span class="icon-slot font-option-check" data-icon="Check"></span></button>
                       <button type="button" data-value="segoe" role="menuitem"><span>Segoe UI Variable</span><span class="icon-slot font-option-check" data-icon="Check"></span></button>
                       <button type="button" data-value="yahei" role="menuitem"><span>微软雅黑</span><span class="icon-slot font-option-check" data-icon="Check"></span></button>
@@ -610,10 +709,12 @@
                   </div>
                   <div class="font-dropdown" id="settingsEditorFontPresetWrap">
                     <button class="font-select-trigger" id="settingsEditorFontPresetButton" type="button" data-font-dropdown-trigger="settingsEditorFontPresetMenu" aria-haspopup="menu" aria-expanded="false">
-                      <span id="settingsEditorFontPresetLabel">Cascadia</span>
+                      <span id="settingsEditorFontPresetLabel">霞鹜文楷等宽</span>
                       <span class="icon-slot font-select-chevron" data-icon="ChevronDown"></span>
                     </button>
                     <div class="font-dropdown-menu hidden" id="settingsEditorFontPresetMenu" role="menu">
+                      <button type="button" data-value="lxgwWenKaiMono" role="menuitem"><span>霞鹜文楷等宽</span><span class="icon-slot font-option-check" data-icon="Check"></span></button>
+                      <button type="button" data-value="lxgwWenKai" role="menuitem"><span>霞鹜文楷</span><span class="icon-slot font-option-check" data-icon="Check"></span></button>
                       <button type="button" data-value="cascadia" role="menuitem"><span>Cascadia</span><span class="icon-slot font-option-check" data-icon="Check"></span></button>
                       <button type="button" data-value="jetbrains" role="menuitem"><span>JetBrains</span><span class="icon-slot font-option-check" data-icon="Check"></span></button>
                       <button type="button" data-value="consolas" role="menuitem"><span>Consolas</span><span class="icon-slot font-option-check" data-icon="Check"></span></button>
@@ -646,6 +747,7 @@
                   <button id="settingsFontMinus" aria-label="缩小字号" title="缩小字号"><span class="icon-slot" data-icon="Minus"></span></button>
                   <strong id="settingsFontValue">14 px</strong>
                   <button id="settingsFontPlus" aria-label="放大字号" title="放大字号"><span class="icon-slot" data-icon="ZoomIn"></span></button>
+                  <button id="settingsFontReset" class="ghost-btn" aria-label="恢复默认字号" title="恢复默认字号 ⌘0">默认</button>
                 </div>
               </div>
               <div class="settings-row">
@@ -723,6 +825,40 @@
                   <button data-value="full">全宽</button>
                 </div>
               </div>
+              <div class="settings-row">
+                <span class="settings-row-icon icon-slot" data-icon="Save"></span>
+                <div>
+                  <strong>自动保存</strong>
+                  <span>已落盘文件在修改后延迟写回（可撤销编辑历史仍在）</span>
+                </div>
+                <div class="seg-control" id="settingsAutoSaveControl">
+                  <button data-value="off">关闭</button>
+                  <button data-value="on">开启</button>
+                </div>
+              </div>
+              <div class="settings-row">
+                <span class="settings-row-icon icon-slot" data-icon="ListTree"></span>
+                <div>
+                  <strong>Tab 宽度</strong>
+                  <span>缩进显示宽度（2 / 4 / 8）</span>
+                </div>
+                <div class="seg-control" id="settingsTabSizeControl">
+                  <button data-value="2">2</button>
+                  <button data-value="4">4</button>
+                  <button data-value="8">8</button>
+                </div>
+              </div>
+              <div class="settings-row">
+                <span class="settings-row-icon icon-slot" data-icon="Pilcrow"></span>
+                <div>
+                  <strong>插入空格代替 Tab</strong>
+                  <span>按 Tab 键时插入空格</span>
+                </div>
+                <div class="seg-control" id="settingsInsertSpacesControl">
+                  <button data-value="off">Tab 字符</button>
+                  <button data-value="on">空格</button>
+                </div>
+              </div>
             </div>
           </section>
 
@@ -766,16 +902,19 @@
 
           <section class="settings-panel" data-settings-panel="workspace">
             <header class="settings-section-head">
-              <strong>工作区</strong>
-              <span>切换 Notra 的主要工作形态</span>
+              <strong>文档与 Markdown</strong>
+              <span>左侧目录侧栏已下线；此处保留 Markdown 与命令入口</span>
             </header>
             <div class="settings-list">
-              <div class="settings-row">
-                <span class="settings-row-icon icon-slot" data-icon="File"></span>
+              <div class="settings-row static">
+                <span class="settings-row-icon icon-slot" data-icon="FolderX"></span>
                 <div>
-                  <strong>文件模式</strong>
-                  <span>单文件或目录浏览</span>
+                  <strong>目录侧栏</strong>
+                  <span>已停用。请使用「打开文件 / 最近打开」。文件查找仍可在有工作区路径时使用。</span>
                 </div>
+                <span class="settings-status-pill unsupported">已下线</span>
+              </div>
+              <div class="settings-row hidden" hidden>
                 <div class="seg-control wide" id="settingsModeControl">
                   <button data-value="single">单文件</button>
                   <button data-value="workspace">文件夹</button>
@@ -941,6 +1080,30 @@
           <button class="menu-row" id="treeRevealButton" role="menuitem"><span class="icon-slot" data-icon="ExternalLink"></span><strong>在资源管理器中显示</strong><small></small></button>
           <button class="menu-row" id="treeRefreshButton" role="menuitem"><span class="icon-slot" data-icon="RefreshCw"></span><strong>刷新目录</strong><small></small></button>
         </div>
+      </section>
+
+      <section class="popover menu-popover hidden" id="editorContextMenu" role="menu" aria-label="编辑器菜单">
+        <div class="menu-list">
+          <button type="button" class="menu-row" role="menuitem" data-editor-ctx="cut"><span class="icon-slot" data-icon="Scissors"></span><strong>剪切</strong><small>Ctrl+X</small></button>
+          <button type="button" class="menu-row" role="menuitem" data-editor-ctx="copy"><span class="icon-slot" data-icon="Copy"></span><strong>复制</strong><small>Ctrl+C</small></button>
+          <button type="button" class="menu-row" role="menuitem" data-editor-ctx="paste"><span class="icon-slot" data-icon="ClipboardPaste"></span><strong>粘贴</strong><small>Ctrl+V</small></button>
+          <div class="menu-divider"></div>
+          <button type="button" class="menu-row" role="menuitem" data-editor-ctx="format"><span class="icon-slot" data-icon="Braces"></span><strong>格式化</strong><small>Shift+Alt+F</small></button>
+          <button type="button" class="menu-row" role="menuitem" data-editor-ctx="minify"><span class="icon-slot" data-icon="Minimize2"></span><strong>压缩</strong><small>单行输出</small></button>
+          <button type="button" class="menu-row" role="menuitem" data-editor-ctx="validate"><span class="icon-slot" data-icon="ShieldCheck"></span><strong>语法校验</strong><small></small></button>
+          <button type="button" class="menu-row" role="menuitem" data-editor-ctx="detect-lang"><span class="icon-slot" data-icon="Scan"></span><strong>识别语言</strong><small></small></button>
+          <!-- 智能工具区（无工具时分隔线自动隐藏） -->
+          <div class="menu-divider" id="editorCtxSmartDivider"></div>
+          <div id="editorCtxSmartTools" class="editor-ctx-smart" aria-label="智能工具"></div>
+          <div class="menu-divider"></div>
+          <button type="button" class="menu-row" role="menuitem" data-editor-ctx="compare-text"><span class="icon-slot" data-icon="Diff"></span><strong>快速对比文本…</strong><small></small></button>
+          <button type="button" class="menu-row" role="menuitem" data-editor-ctx="toolbox"><span class="icon-slot" data-icon="Wrench"></span><strong>更多工具…</strong><small>工具箱</small></button>
+          <button type="button" class="menu-row" role="menuitem" data-editor-ctx="compare-disk" id="editorCtxCompareDisk"><span class="icon-slot" data-icon="HardDrive"></span><strong>与磁盘对比</strong><small></small></button>
+        </div>
+      </section>
+
+      <section class="popover menu-popover toolbar-overflow-menu hidden" id="toolbarOverflowMenu" role="menu" aria-label="更多工具栏按钮">
+        <div class="menu-list" id="toolbarOverflowList"></div>
       </section>
 
       <section class="popover markdown-context-menu hidden" id="markdownContextMenu" role="menu" aria-label="Markdown 编辑菜单">
@@ -1110,7 +1273,7 @@
                 <label for="findInput">查找目标</label>
                 <div class="search-history-control">
                   <input id="findInput" autocomplete="off" aria-controls="findHistoryMenu" aria-expanded="false" placeholder="输入要查找的文本" />
-                  <button class="search-history-toggle" id="findHistoryButton" type="button" aria-label="搜索历史" aria-controls="findHistoryMenu" aria-expanded="false" title="搜索历史"><span class="icon-slot" data-icon="ChevronDown"></span></button>
+                  <button class="search-history-toggle" id="findHistoryButton" type="button" aria-label="搜索历史" aria-controls="findHistoryMenu" aria-expanded="false" title="搜索历史"><span class="icon-slot" data-icon="Clock"></span></button>
                   <div class="search-history-menu hidden" id="findHistoryMenu" role="listbox" aria-label="搜索历史"></div>
                 </div>
               </div>
@@ -1118,7 +1281,7 @@
                 <label for="replaceInput">替换为</label>
                 <div class="search-history-control">
                   <input id="replaceInput" autocomplete="off" aria-controls="replaceHistoryMenu" aria-expanded="false" placeholder="输入替换文本" />
-                  <button class="search-history-toggle" id="replaceHistoryButton" type="button" aria-label="替换历史" aria-controls="replaceHistoryMenu" aria-expanded="false" title="替换历史"><span class="icon-slot" data-icon="ChevronDown"></span></button>
+                  <button class="search-history-toggle" id="replaceHistoryButton" type="button" aria-label="替换历史" aria-controls="replaceHistoryMenu" aria-expanded="false" title="替换历史"><span class="icon-slot" data-icon="Clock"></span></button>
                   <div class="search-history-menu hidden" id="replaceHistoryMenu" role="listbox" aria-label="替换历史"></div>
                 </div>
               </div>
@@ -1178,10 +1341,13 @@
           <button class="status-action" id="languageButton" data-menu-trigger aria-label="语言 Plain Text" title="语言 Plain Text"><span data-label>Plain Text</span></button>
           <button class="status-action" id="encodingButton" data-menu-trigger aria-label="编码 UTF-8" title="编码 UTF-8"><span data-label>UTF-8</span></button>
           <button class="status-action" id="lineEndingButton" data-menu-trigger aria-label="行尾 LF" title="行尾 LF"><span data-label>LF</span></button>
+          <button class="status-action" id="indentButton" aria-label="缩进设置" title="缩进设置"><span data-label>空格 2</span></button>
           <span id="statusDocumentState"></span>
         </div>
         <div class="status-right" id="statusRight"></div>
       </footer>
+
+      <div id="appToast" class="app-toast hidden" role="status" aria-live="polite"></div>
 
       <section class="modal-backdrop hidden" id="unsavedDialog" role="dialog" aria-modal="true" aria-labelledby="unsavedTitle">
         <div class="modal">
@@ -1227,6 +1393,65 @@
           <footer>
             <button class="tool-button" id="inputCancelButton">取消</button>
             <button class="tool-button primary" id="inputOkButton">确认</button>
+          </footer>
+        </div>
+      </section>
+
+      <section class="modal-backdrop hidden" id="textDiffDialog" role="dialog" aria-modal="true" aria-labelledby="textDiffTitle">
+        <div class="modal modal-wide text-diff-modal">
+          <header class="text-diff-header">
+            <div class="text-diff-header-mark" aria-hidden="true">
+              <span class="icon-slot" data-icon="GitCompareArrows"></span>
+            </div>
+            <div class="text-diff-header-text">
+              <strong id="textDiffTitle">快速对比文本</strong>
+              <span>左右粘贴两段文本，即时打开 Diff，无需先保存文件</span>
+            </div>
+          </header>
+          <div class="modal-body text-diff-body">
+            <div class="text-diff-pane text-diff-pane-left">
+              <div class="text-diff-pane-head">
+                <div class="text-diff-pane-title">
+                  <span class="text-diff-badge text-diff-badge-left">A</span>
+                  <strong>原始</strong>
+                </div>
+                <div class="text-diff-pane-actions">
+                  <button type="button" class="text-diff-chip" id="textDiffLeftFromEditor" title="填入当前选区或全文">当前文档</button>
+                  <button type="button" class="text-diff-chip" id="textDiffLeftPaste" title="从剪贴板粘贴">粘贴</button>
+                  <button type="button" class="text-diff-chip" id="textDiffLeftClear" title="清空">清空</button>
+                </div>
+              </div>
+              <textarea id="textDiffLeftInput" spellcheck="false" placeholder="粘贴或输入原始文本…"></textarea>
+            </div>
+            <div class="text-diff-swap-rail" aria-hidden="true">
+              <button type="button" class="text-diff-swap-fab" id="textDiffSwapButton" title="交换左右" aria-label="交换左右">
+                <span class="icon-slot" data-icon="ArrowLeftRight"></span>
+              </button>
+            </div>
+            <div class="text-diff-pane text-diff-pane-right">
+              <div class="text-diff-pane-head">
+                <div class="text-diff-pane-title">
+                  <span class="text-diff-badge text-diff-badge-right">B</span>
+                  <strong>修改</strong>
+                </div>
+                <div class="text-diff-pane-actions">
+                  <button type="button" class="text-diff-chip" id="textDiffRightFromEditor" title="填入当前选区或全文">当前文档</button>
+                  <button type="button" class="text-diff-chip" id="textDiffRightPaste" title="从剪贴板粘贴">粘贴</button>
+                  <button type="button" class="text-diff-chip" id="textDiffRightClear" title="清空">清空</button>
+                </div>
+              </div>
+              <textarea id="textDiffRightInput" spellcheck="false" placeholder="粘贴或输入修改后文本…"></textarea>
+            </div>
+          </div>
+          <footer class="text-diff-footer">
+            <label class="text-diff-ignore-ws"><input type="checkbox" id="textDiffIgnoreWs" /> 忽略空白差异</label>
+            <span class="text-diff-footer-hint">支持直接粘贴 · 空侧将无法开始</span>
+            <span class="text-diff-footer-spacer"></span>
+            <button type="button" class="text-diff-btn ghost" id="textDiffCancelButton">取消</button>
+            <button type="button" class="text-diff-btn primary" id="textDiffStartButton">
+              <span class="icon-slot" data-icon="GitCompareArrows"></span>
+              <span>开始对比</span>
+            </button>
           </footer>
         </div>
       </section>

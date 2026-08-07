@@ -9,6 +9,7 @@ import {
   AlignLeft,
   AlignRight,
   ArrowDown,
+  ArrowLeftRight,
   ArrowUp,
   BetweenVerticalEnd,
   BetweenVerticalStart,
@@ -40,6 +41,8 @@ import {
   FileText,
   Files,
   FolderOpen,
+  GitCompareArrows,
+  HardDrive,
   FolderPlus,
   FolderTree,
   FolderX,
@@ -65,8 +68,11 @@ import {
   LoaderCircle,
   Map,
   Maximize2,
+  Minimize2,
   Minus,
+  Plus,
   Moon,
+  MoreHorizontal,
   MonitorCog,
   MousePointerClick,
   NotebookPen,
@@ -88,6 +94,8 @@ import {
   Settings,
   ShieldCheck,
   Sigma,
+  Star,
+  Stethoscope,
   Sun,
   Table2,
   Type,
@@ -98,6 +106,17 @@ import {
   X,
   ZoomIn,
   ZoomOut,
+  Diff,
+  TerminalSquare,
+  Clock,
+  Scan,
+  BetweenHorizontalStart,
+  BetweenHorizontalEnd,
+  ArrowLeft,
+  ArrowRight,
+  SearchX,
+  CheckCircle,
+  RotateCcw,
   createElement as createLucideElement,
   type IconNode,
 } from "lucide";
@@ -112,6 +131,7 @@ import {
   bindingLabel,
   bindingStartsWith,
   commandBindings,
+  isApplePlatform,
   isKeymapProfile,
   keyboardEventStroke,
   normalizeBinding,
@@ -122,9 +142,12 @@ import {
 import {
   TOOLBOX_CATEGORY_LABELS,
   TOOLBOX_ITEMS,
+  detectToolboxHints,
   getToolboxItem,
   listToolboxItems,
+  isToolboxCatalogItem,
   runToolboxItem,
+  toolboxItemFields,
   toolboxMatchesBlockReason,
   toolboxSupportsMatches,
   type ToolboxCategoryId,
@@ -143,6 +166,10 @@ import "monaco-editor/esm/vs/basic-languages/monaco.contribution";
 import "monaco-editor/esm/vs/editor/contrib/linesOperations/browser/linesOperations";
 import "monaco-editor/esm/vs/editor/contrib/bracketMatching/browser/bracketMatching";
 import "monaco-editor/esm/vs/editor/contrib/wordHighlighter/browser/wordHighlighter";
+// editor.api 不含折叠；必须显式注册
+import "monaco-editor/esm/vs/editor/contrib/folding/browser/folding";
+// 折叠图标依赖 codicon 字体，否则显示为空方框
+import "monaco-editor/esm/vs/base/browser/ui/codicons/codiconStyles.js";
 import "monaco-editor/esm/vs/language/json/monaco.contribution";
 import "./styles.css";
 
@@ -312,6 +339,7 @@ interface SessionSnapshot {
   activePath: string | null;
   activeDraftId: string | null;
   darkMode: boolean;
+  themeId?: AppThemeId;
   contextMenuEnabled?: boolean;
   defaultAppCandidateEnabled?: boolean;
   rightSidebarOpen: boolean;
@@ -334,6 +362,11 @@ interface SessionSnapshot {
   smoothCaretAnimation: boolean;
   renderWhitespace: RenderWhitespaceMode;
   fontSize: number;
+  autoSave?: boolean;
+  tabSize?: number;
+  insertSpaces?: boolean;
+  toolboxRecent?: string[];
+  toolboxFavorites?: string[];
   shellFontMode: FontMode;
   shellFontPreset: ShellFontPreset;
   shellFontCustom: string;
@@ -370,6 +403,78 @@ window.MonacoEnvironment = {
     return new editorWorker();
   },
 };
+
+/** XML/HTML 标签折叠（Monaco 内置 XML 无 tag folding） */
+let languageFoldingRegistered = false;
+function registerStructuredFoldingProviders() {
+  if (languageFoldingRegistered) return;
+  languageFoldingRegistered = true;
+
+  const voidTags = new Set([
+    "area", "base", "br", "col", "embed", "hr", "img", "input",
+    "link", "meta", "param", "source", "track", "wbr",
+  ]);
+
+  const tagFoldingProvider: monaco.languages.FoldingRangeProvider = {
+    provideFoldingRanges(model) {
+      const ranges: monaco.languages.FoldingRange[] = [];
+      const stack: { name: string; line: number }[] = [];
+      const lineCount = model.getLineCount();
+      const tagRe = /<!\[CDATA\[[\s\S]*?\]\]>|<!--[\s\S]*?-->|<!DOCTYPE[\s\S]*?>|<\?[\s\S]*?\?>|<\/([A-Za-z_:][\w:.-]*)\s*>|<([A-Za-z_:][\w:.-]*)\b[^>]*>/g;
+
+      for (let line = 1; line <= lineCount; line++) {
+        const textLine = model.getLineContent(line);
+        tagRe.lastIndex = 0;
+        let match: RegExpExecArray | null;
+        while ((match = tagRe.exec(textLine))) {
+          const full = match[0];
+          if (
+            full.startsWith("<!--")
+            || full.startsWith("<!DOCTYPE")
+            || full.startsWith("<?")
+            || full.startsWith("<![")
+          ) continue;
+          if (full.startsWith("</")) {
+            const name = (match[1] || "").toLowerCase();
+            for (let i = stack.length - 1; i >= 0; i -= 1) {
+              if (stack[i].name === name) {
+                const start = stack[i].line;
+                if (line > start) {
+                  ranges.push({
+                    start,
+                    end: line,
+                    kind: monaco.languages.FoldingRangeKind.Region,
+                  });
+                }
+                stack.length = i;
+                break;
+              }
+            }
+            continue;
+          }
+          const name = (match[2] || "").toLowerCase();
+          if (!name || voidTags.has(name)) continue;
+          if (/\/>\s*$/.test(full)) continue;
+          stack.push({ name, line });
+        }
+      }
+      return ranges;
+    },
+  };
+
+  monaco.languages.registerFoldingRangeProvider("xml", tagFoldingProvider);
+  monaco.languages.registerFoldingRangeProvider("html", tagFoldingProvider);
+
+  for (const languageId of ["yaml", "python"]) {
+    try {
+      monaco.languages.setLanguageConfiguration(languageId, {
+        folding: { offSide: true },
+      });
+    } catch {
+      // language may be unregistered
+    }
+  }
+}
 
 type LanguageEntry = readonly [string, string, string];
 type MonacoLanguage = ReturnType<typeof monaco.languages.getLanguages>[number];
@@ -454,8 +559,120 @@ type HorizontalResizeState = {
   maxWidth: number;
 };
 type FontMode = "preset" | "custom";
-type ShellFontPreset = "system" | "segoe" | "yahei" | "dengxian" | "sourceHanSans" | "misans";
-type EditorFontPreset = "cascadia" | "jetbrains" | "consolas" | "firaCode" | "sourceCodePro";
+type AppThemeId =
+  | "paper"
+  | "wiki"
+  | "border"
+  | "cupertino"
+  | "focus"
+  | "midnight"
+  | "aurora";
+
+/** 旧会话主题 id → 新皮肤 */
+const APP_THEME_ALIASES: Record<string, AppThemeId> = {
+  ocean: "wiki",
+  ink: "focus",
+  forest: "aurora",
+  dusk: "cupertino",
+};
+
+interface AppThemeDef {
+  id: AppThemeId;
+  label: string;
+  description: string;
+  /** Obsidian 灵感来源 */
+  inspiredBy: string;
+  dark: boolean;
+  monaco: string;
+  /** settings card swatches: bg, surface, primary, text */
+  swatches: [string, string, string, string];
+}
+
+const APP_THEMES: AppThemeDef[] = [
+  {
+    id: "paper",
+    label: "纸感",
+    description: "标准桌面布局",
+    inspiredBy: "Notra 默认",
+    dark: false,
+    monaco: "notra-paper",
+    swatches: ["#e7edf6", "#fbfcfe", "#3a41d9", "#0f172a"],
+  },
+  {
+    id: "wiki",
+    label: "百科",
+    description: "文字工具栏 · 直角百科风",
+    inspiredBy: "Obsidian · Wikipedia",
+    dark: false,
+    monaco: "notra-wiki",
+    swatches: ["#f8f9fa", "#ffffff", "#3366cc", "#202122"],
+  },
+  {
+    id: "border",
+    label: "浮层",
+    description: "整窗留白 · 每块独立悬浮卡",
+    inspiredBy: "Obsidian · Border",
+    dark: false,
+    monaco: "notra-border",
+    swatches: ["#e8ecf4", "#ffffff", "#5b7cfa", "#1e293b"],
+  },
+  {
+    id: "cupertino",
+    label: "苹果风",
+    description: "工具条并入顶栏 · 胶囊标签",
+    inspiredBy: "Obsidian · Cupertino",
+    dark: false,
+    monaco: "notra-cupertino",
+    swatches: ["#e9eef5", "#f5f7fa", "#007aff", "#1c1c1e"],
+  },
+  {
+    id: "focus",
+    label: "专注",
+    description: "窄铬合金 · 居中编辑 · 隐藏噪音",
+    inspiredBy: "Obsidian · Shimmering Focus",
+    dark: false,
+    monaco: "notra-focus",
+    swatches: ["#f2f1ef", "#fafaf9", "#6b7280", "#111827"],
+  },
+  {
+    id: "midnight",
+    label: "夜航",
+    description: "紧凑深色 · 顶线活动标签",
+    inspiredBy: "Notra Dark",
+    dark: true,
+    monaco: "notra-midnight",
+    swatches: ["#0d121a", "#151b26", "#9aa1ff", "#eef3fb"],
+  },
+  {
+    id: "aurora",
+    label: "极光",
+    description: "左侧霓虹轨 · 赛博分栏",
+    inspiredBy: "Obsidian · Future / Underwater",
+    dark: true,
+    monaco: "notra-aurora",
+    swatches: ["#070b14", "#0f1524", "#22d3ee", "#e2e8f0"],
+  },
+];
+
+const DEFAULT_APP_THEME: AppThemeId = "paper";
+
+function resolveAppThemeId(value: unknown): AppThemeId | null {
+  if (typeof value !== "string") return null;
+  if (APP_THEMES.some((theme) => theme.id === value)) return value as AppThemeId;
+  const aliased = APP_THEME_ALIASES[value];
+  return aliased ?? null;
+}
+
+function isAppThemeId(value: unknown): value is AppThemeId {
+  return resolveAppThemeId(value) !== null;
+}
+
+function getAppTheme(id: AppThemeId = state.themeId): AppThemeDef {
+  const resolved = resolveAppThemeId(id) ?? DEFAULT_APP_THEME;
+  return APP_THEMES.find((theme) => theme.id === resolved) ?? APP_THEMES[0]!;
+}
+type ShellFontPreset = "lxgwWenKai" | "system" | "segoe" | "yahei" | "dengxian" | "sourceHanSans" | "misans";
+type EditorFontPreset = "lxgwWenKaiMono" | "lxgwWenKai" | "cascadia" | "jetbrains" | "consolas" | "firaCode" | "sourceCodePro";
 type TreeIconShape =
   | "archive"
   | "code"
@@ -714,10 +931,11 @@ const treeExtensionIcons: Record<string, TreeIconDescriptor> = {
 const SESSION_KEY = "notra.session.v1";
 const DEFAULT_SKIP_DIRS = ".git;target;target-codex-run;node_modules;dist;build";
 const DRAFT_ID_PREFIX = "draft";
-const DEFAULT_SHELL_FONT_PRESET: ShellFontPreset = "system";
-const DEFAULT_EDITOR_FONT_PRESET: EditorFontPreset = "cascadia";
+const DEFAULT_SHELL_FONT_PRESET: ShellFontPreset = "lxgwWenKai";
+const DEFAULT_EDITOR_FONT_PRESET: EditorFontPreset = "lxgwWenKaiMono";
 const DEFAULT_SHELL_FONT_SIZE = 14;
 const DEFAULT_EDITOR_FONT_SIZE = 14;
+const WORKSPACE_SIDEBAR_ENABLED = true;
 const DEFAULT_EXPLORER_WIDTH = 272;
 const MIN_EXPLORER_WIDTH = 180;
 const MAX_EXPLORER_WIDTH = 640;
@@ -725,6 +943,7 @@ const MIN_WORKSPACE_EDITOR_WIDTH = 320;
 const EXPLORER_RESIZE_WIDTH = 6;
 
 const SHELL_FONT_STACKS: Record<ShellFontPreset, string> = {
+  lxgwWenKai: '"LXGW WenKai", "霞鹜文楷", "Segoe UI", "Microsoft YaHei UI", sans-serif',
   system: '"Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", Arial, sans-serif',
   segoe: '"Segoe UI Variable Text", "Segoe UI Variable Display", "Segoe UI", Arial, sans-serif',
   yahei: '"Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif',
@@ -734,11 +953,13 @@ const SHELL_FONT_STACKS: Record<ShellFontPreset, string> = {
 };
 
 const EDITOR_FONT_STACKS: Record<EditorFontPreset, string> = {
-  cascadia: '"Cascadia Code", "Cascadia Mono", Consolas, "Microsoft YaHei UI", monospace',
-  jetbrains: '"JetBrains Mono", "Cascadia Code", Consolas, "Microsoft YaHei UI", monospace',
-  consolas: 'Consolas, "Cascadia Code", "Microsoft YaHei UI", monospace',
-  firaCode: '"Fira Code", "Cascadia Code", Consolas, "Microsoft YaHei UI", monospace',
-  sourceCodePro: '"Source Code Pro", "Cascadia Code", Consolas, "Microsoft YaHei UI", monospace',
+  lxgwWenKaiMono: '"LXGW WenKai Mono", "霞鹜文楷等宽", "LXGW WenKai", "霞鹜文楷", "Cascadia Code", Consolas, monospace',
+  lxgwWenKai: '"LXGW WenKai", "霞鹜文楷", "LXGW WenKai Mono", "Cascadia Code", Consolas, monospace',
+  cascadia: '"Cascadia Code", "Cascadia Mono", Consolas, "LXGW WenKai", "Microsoft YaHei UI", monospace',
+  jetbrains: '"JetBrains Mono", "Cascadia Code", Consolas, "LXGW WenKai", "Microsoft YaHei UI", monospace',
+  consolas: 'Consolas, "Cascadia Code", "LXGW WenKai", "Microsoft YaHei UI", monospace',
+  firaCode: '"Fira Code", "Cascadia Code", Consolas, "LXGW WenKai", "Microsoft YaHei UI", monospace',
+  sourceCodePro: '"Source Code Pro", "Cascadia Code", Consolas, "LXGW WenKai", "Microsoft YaHei UI", monospace',
 };
 
 const FONT_MODE_LABELS: Record<FontMode, string> = {
@@ -747,6 +968,7 @@ const FONT_MODE_LABELS: Record<FontMode, string> = {
 };
 
 const SHELL_FONT_LABELS: Record<ShellFontPreset, string> = {
+  lxgwWenKai: "霞鹜文楷",
   system: "系统默认",
   segoe: "Segoe UI Variable",
   yahei: "微软雅黑",
@@ -756,6 +978,8 @@ const SHELL_FONT_LABELS: Record<ShellFontPreset, string> = {
 };
 
 const EDITOR_FONT_LABELS: Record<EditorFontPreset, string> = {
+  lxgwWenKaiMono: "霞鹜文楷等宽",
+  lxgwWenKai: "霞鹜文楷",
   cascadia: "Cascadia",
   jetbrains: "JetBrains",
   consolas: "Consolas",
@@ -774,10 +998,12 @@ const state = {
   searchHistory: [] as string[],
   replaceHistory: [] as string[],
   searchFavorites: [] as string[],
-  showDirectory: false,
+  showDirectory: false, // 侧栏已下线
+  // mode forced single below
   markdownEditMode: "source" as MarkdownEditMode,
   markdownContentWidth: "typora" as MarkdownContentWidth,
   darkMode: false,
+  themeId: DEFAULT_APP_THEME as AppThemeId,
   panel: "results" as "results" | "preview" | "logs",
   logs: [] as string[],
   results: null as SearchReportDto | null,
@@ -799,6 +1025,11 @@ const state = {
   minimap: false,
   smoothCaretAnimation: false,
   renderWhitespace: "selection" as RenderWhitespaceMode,
+  autoSave: true,
+  tabSize: 2,
+  insertSpaces: true,
+  toolboxRecent: [] as string[],
+  toolboxFavorites: [] as string[],
   fontSize: DEFAULT_EDITOR_FONT_SIZE,
   shellFontMode: "preset" as FontMode,
   shellFontPreset: DEFAULT_SHELL_FONT_PRESET as ShellFontPreset,
@@ -889,11 +1120,14 @@ const pendingSqlFormats = new globalThis.Map<number, {
 }>();
 let treeMenuTarget: TreeContextTarget | null = null;
 let toolboxCategory: ToolboxCategoryId = "json";
-let toolboxSelectedId: ToolboxItemId | null = "json-pretty";
+let toolboxSelectedId: ToolboxItemId | null = "json-sort-keys";
+/** 用户选过分类/工具后，关闭再打开应回到同一工具，不被语言猜测打断 */
+let toolboxRememberChoice = false;
 let toolboxScope: ToolboxScope = "selection";
+let toolboxSearch = ""; // 保留变量避免引用报错（搜索功能已移除）
 let toolboxPreviewTimer = 0;
 let toolboxLastPreviewText = "";
-let toolboxLastReplace = true;
+let toolboxLastReplace = false;
 let busyDepth = 0;
 let editorBusyDepth = 0;
 let openRequestTask: Promise<void> = Promise.resolve();
@@ -909,6 +1143,9 @@ let editorLayoutForceRender = false;
 let editorLayoutWidth = -1;
 let editorLayoutHeight = -1;
 let editorLayoutFrozen = false;
+let appToastTimer = 0;
+let statusNoticeTimer = 0;
+let statusNoticeText = "";
 let markdownPreviewTimer = 0;
 let markdownPreviewRenderVersion = 0;
 let markdownModelSyncTimer = 0;
@@ -974,6 +1211,7 @@ const lucideIcons: Record<string, IconNode> = {
   AlignLeft,
   AlignRight,
   ArrowDown,
+  ArrowLeftRight,
   ArrowUp,
   BetweenVerticalEnd,
   BetweenVerticalStart,
@@ -1005,6 +1243,8 @@ const lucideIcons: Record<string, IconNode> = {
   FileText,
   Files,
   FolderOpen,
+  GitCompareArrows,
+  HardDrive,
   FolderPlus,
   FolderTree,
   FolderX,
@@ -1030,8 +1270,11 @@ const lucideIcons: Record<string, IconNode> = {
   LoaderCircle,
   Map,
   Maximize2,
+  Minimize2,
   Minus,
+  Plus,
   Moon,
+  MoreHorizontal,
   MonitorCog,
   MousePointerClick,
   NotebookPen,
@@ -1053,6 +1296,8 @@ const lucideIcons: Record<string, IconNode> = {
   Settings,
   ShieldCheck,
   Sigma,
+  Star,
+  Stethoscope,
   Sun,
   Table2,
   Type,
@@ -1063,14 +1308,223 @@ const lucideIcons: Record<string, IconNode> = {
   X,
   ZoomIn,
   ZoomOut,
+  RotateCcw,
+  Diff,
+  TerminalSquare,
+  Clock,
+  Scan,
+  BetweenHorizontalStart,
+  BetweenHorizontalEnd,
+  ArrowLeft,
+  ArrowRight,
+  SearchX,
+  CheckCircle,
 };
 const setButtonLabel = (id: string, value: string, accessible = value) => {
-  const button = $<HTMLButtonElement>(id);
+  const button = document.getElementById(id) as HTMLButtonElement | null;
+  if (!button) return;
   const label = button.querySelector<HTMLElement>("[data-label]");
   if (label) label.textContent = value;
-  button.title = accessible;
+  // 工具栏/标题栏用 CSS 快速 tip（aria-label），去掉原生 title 避免再等 1 秒双提示
   button.setAttribute("aria-label", accessible);
+  if (button.closest(".toolbar, .titlebar, .statusbar, .activity-rail, .right-tool-tabs")) {
+    button.removeAttribute("title");
+  } else {
+    button.title = accessible;
+  }
 };
+
+const CHROME_TIP_SELECTOR = [
+  ".toolbar .tool-button",
+  ".toolbar .right-sidebar-toggle",
+  ".titlebar .title-button",
+  ".titlebar .window-button",
+  ".statusbar .status-action",
+  ".tabs .tab-new-button",
+  ".right-tool-tabs .right-tool-tab",
+  ".right-tool-tabs .right-sidebar-toggle",
+  ".activity-rail .rail-button",
+].join(", ");
+
+let chromeTipEl: HTMLDivElement | null = null;
+let chromeTipTimer = 0;
+let chromeTipAnchor: HTMLElement | null = null;
+
+function ensureChromeTipEl() {
+  if (chromeTipEl && document.body.contains(chromeTipEl)) return chromeTipEl;
+  const el = document.createElement("div");
+  el.className = "chrome-fast-tip";
+  el.setAttribute("role", "tooltip");
+  el.hidden = true;
+  document.body.appendChild(el);
+  chromeTipEl = el;
+  return el;
+}
+
+function chromeTipText(el: HTMLElement) {
+  const label = (el.getAttribute("aria-label") || el.title || el.dataset.label || "").trim();
+  if (label) return label;
+  const dataLabel = el.querySelector<HTMLElement>("[data-label]")?.textContent?.trim();
+  return dataLabel || "";
+}
+
+function hideChromeTip() {
+  window.clearTimeout(chromeTipTimer);
+  chromeTipTimer = 0;
+  chromeTipAnchor = null;
+  if (!chromeTipEl) return;
+  chromeTipEl.classList.remove("visible");
+  chromeTipEl.hidden = true;
+}
+
+function positionChromeTip(anchor: HTMLElement) {
+  const tip = ensureChromeTipEl();
+  const text = chromeTipText(anchor);
+  if (!text) {
+    hideChromeTip();
+    return;
+  }
+  tip.textContent = text;
+  tip.hidden = false;
+  tip.classList.add("visible");
+  const rect = anchor.getBoundingClientRect();
+  const tipRect = tip.getBoundingClientRect();
+  const gap = 8;
+  let left = rect.left + rect.width / 2 - tipRect.width / 2;
+  left = Math.max(8, Math.min(left, window.innerWidth - tipRect.width - 8));
+  // 默认在下方；贴底则翻到上方
+  let top = rect.bottom + gap;
+  if (top + tipRect.height > window.innerHeight - 8) {
+    top = rect.top - tipRect.height - gap;
+  }
+  top = Math.max(8, top);
+  tip.style.left = `${Math.round(left)}px`;
+  tip.style.top = `${Math.round(top)}px`;
+}
+
+function showChromeTip(anchor: HTMLElement) {
+  if (anchor instanceof HTMLButtonElement && anchor.disabled) return;
+  if (anchor.getAttribute("aria-disabled") === "true") return;
+  if (anchor.classList.contains("hidden")) return;
+  const text = chromeTipText(anchor);
+  if (!text) return;
+  chromeTipAnchor = anchor;
+  window.clearTimeout(chromeTipTimer);
+  // 约 40ms：几乎即显，仍避免鼠标扫过闪烁
+  chromeTipTimer = window.setTimeout(() => {
+    if (chromeTipAnchor === anchor) positionChromeTip(anchor);
+  }, 40);
+}
+
+/**
+ * 工具栏/菜单快捷键标注平台化：macOS 显示 ⌘/⇧/⌥，Windows/Linux 保留 Ctrl+
+ * 只替换 title/aria-label 中的 “Ctrl+X” 模式，保留带选的描述文本。
+ */
+function patchToolbarTitles() {
+  // 按钮 ID → 命令 ID 映射
+  const MAP: Record<string, string> = {
+    newButton: "file.new",
+    openButton: "file.open",
+    saveButton: "file.save",
+    saveAsButton: "file.saveAs",
+    saveAllButton: "file.saveAll",
+    undoButton: "edit.undo",
+    redoButton: "edit.redo",
+    formatDocumentButton: "editor.formatDocument",
+    findButton: "search.find",
+    replaceButton: "search.replace",
+    goToLineButton: "navigation.goToLine",
+    commandButton: "navigation.commandPalette",
+    fontZoomOutButton: "view.zoomOut",
+    fontZoomInButton: "view.zoomIn",
+    fontZoomValueButton: "view.zoomReset",
+    wordWrapButton: "view.toggleWordWrap",
+  };
+  for (const [btnId, cmdId] of Object.entries(MAP)) {
+    const el = document.getElementById(btnId) as HTMLElement | null;
+    if (!el) continue;
+    const binding = activeCommandBindings(cmdId)[0];
+    if (!binding) continue;
+    const shortcut = bindingLabel(binding);
+    // title
+    const title = el.getAttribute("title") ?? "";
+    // 替换尾部的快捷键（支持多修饰键：Shift+Alt+F / Ctrl+Shift+P 等）
+    const shortcutPattern = /\s+(?:(?:Ctrl|Shift|Alt|Meta)\+)+[A-Za-z0-9+=\[\]\\/;,.'`\-~]+$/;
+    el.setAttribute("title", title.replace(shortcutPattern, " " + shortcut).trimEnd());
+    const al = el.getAttribute("aria-label") ?? "";
+    el.setAttribute("aria-label", al.replace(shortcutPattern, " " + shortcut).trimEnd());
+  }
+}
+
+function bindChromeFastTips() {
+  if ((bindChromeFastTips as unknown as { bound?: boolean }).bound) return;
+  (bindChromeFastTips as unknown as { bound?: boolean }).bound = true;
+
+  // 去掉 chrome 区原生 title，统一走快速 tip
+  stripNativeChromeTitles(document);
+
+  document.addEventListener("pointerdown", () => hideChromeTip(), true);
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") hideChromeTip();
+  }, true);
+
+  document.addEventListener("pointerover", (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const anchor = target.closest(CHROME_TIP_SELECTOR) as HTMLElement | null;
+    if (!anchor) return;
+    if (anchor instanceof HTMLButtonElement && anchor.disabled) return;
+    if (anchor.getAttribute("aria-disabled") === "true") return;
+    // 进入子元素不重复刷
+    const related = event.relatedTarget;
+    if (related instanceof Node && anchor.contains(related)) return;
+    showChromeTip(anchor);
+  }, true);
+
+  document.addEventListener("pointerout", (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const anchor = target.closest(CHROME_TIP_SELECTOR) as HTMLElement | null;
+    if (!anchor) return;
+    const related = event.relatedTarget;
+    if (related instanceof Node && anchor.contains(related)) return;
+    if (chromeTipAnchor === anchor) hideChromeTip();
+  }, true);
+
+  document.addEventListener("focusin", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    if (!target.matches(CHROME_TIP_SELECTOR)) return;
+    showChromeTip(target);
+  }, true);
+
+  document.addEventListener("focusout", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    if (chromeTipAnchor === target) hideChromeTip();
+  }, true);
+
+  window.addEventListener("scroll", () => hideChromeTip(), true);
+  window.addEventListener("resize", () => hideChromeTip());
+}
+
+function stripNativeChromeTitles(root: ParentNode = document) {
+  root.querySelectorAll<HTMLElement>(CHROME_TIP_SELECTOR).forEach((el) => {
+    if (!el.getAttribute("aria-label")) {
+      const t = el.title.trim();
+      const dataLabel = el.querySelector<HTMLElement>("[data-label]")?.textContent?.trim() || "";
+      if (t) el.setAttribute("aria-label", t);
+      else if (dataLabel) el.setAttribute("aria-label", dataLabel);
+    }
+    // 去掉原生 title，避免再等 1 秒
+    if (el.title) el.removeAttribute("title");
+  });
+}
+
+/** @deprecated name kept for call sites */
+function preferFastToolbarTips(root: ParentNode = document) {
+  stripNativeChromeTitles(root);
+}
 
 function iconSvg(name: string) {
   const iconNode = lucideIcons[name];
@@ -1187,18 +1641,25 @@ function setIconSlot(slot: HTMLElement | null, name: string) {
 bootstrap();
 
 function bootstrap() {
-  bindOpenRequestListener();
   window.addEventListener("unhandledrejection", (event) => {
-    log(`操作失败：${event.reason instanceof Error ? event.reason.message : String(event.reason)}`);
+    console.error(event.reason);
+    try { log(`操作失败：${event.reason instanceof Error ? event.reason.message : String(event.reason)}`); } catch { /* ignore */ }
   });
   window.addEventListener("error", (event) => {
-    log(`界面错误：${event.message}`);
+    console.error(event.error || event.message);
+    try { log(`界面错误：${event.message}`); } catch { /* ignore */ }
+    // 出错也尽量关掉启动页，避免一直卡在「正在启动」
+    try { markAppReady(); } catch { /* ignore */ }
   });
+  try {
+  bindOpenRequestListener();
   registerMdx();
   registerToml();
   registerCompletionProviders();
   registerFormattingProviders();
   defineThemes();
+  document.body.dataset.theme = state.themeId;
+  document.body.classList.toggle("dark", state.darkMode);
   renderIconSlots();
 
   const initial = createDocument({
@@ -1217,24 +1678,30 @@ function bootstrap() {
   state.activeId = initial.id;
   applyShellFontSettings();
   applyMarkdownContentWidth();
+  registerStructuredFoldingProviders();
 
   editor = monaco.editor.create($("editor"), {
     model: initial.model,
-    theme: "notra-light",
+    theme: getAppTheme().monaco,
     automaticLayout: true,
     fontFamily: resolveEditorFontStack(),
     fontSize: state.fontSize,
     lineHeight: editorLineHeight(),
-    tabSize: 2,
-    insertSpaces: true,
+    tabSize: state.tabSize,
+    insertSpaces: state.insertSpaces,
+    // -1 = 不截断长行；避免 JSON 单行出现刺眼的 Show more 蓝块
+    stopRenderingLineAfter: -1,
+    padding: { top: 12, bottom: 24 },
     minimap: { enabled: state.minimap },
     scrollbar: { verticalScrollbarSize: 10, horizontalScrollbarSize: 10 },
     smoothScrolling: true,
+    mouseWheelZoom: false,
     cursorSmoothCaretAnimation: state.smoothCaretAnimation ? "on" : "off",
     cursorBlinking: "smooth",
     bracketPairColorization: { enabled: true },
     guides: {
-      bracketPairs: false,
+      bracketPairs: true,
+      bracketPairsHorizontal: false,
       indentation: true,
       highlightActiveIndentation: true,
     },
@@ -1242,7 +1709,9 @@ function bootstrap() {
     stickyScroll: { enabled: false },
     folding: true,
     foldingHighlight: true,
-    showFoldingControls: "mouseover",
+    foldingStrategy: "auto",
+    showFoldingControls: "always",
+    unfoldOnClickAfterEndOfLine: true,
     wordWrap: state.wordWrap ? "on" : "off",
     largeFileOptimizations: true,
     renderWhitespace: state.renderWhitespace,
@@ -1274,6 +1743,10 @@ function bootstrap() {
   activeSearchDecoration = editor.createDecorationsCollection();
   bookmarkDecorations = editor.createDecorationsCollection();
   editor.onDidScrollChange(syncMarkdownPreviewScroll);
+  editor.onDidPaste(() => {
+    window.setTimeout(() => void maybeDetectLanguageAfterEdit("paste"), 0);
+  });
+  editor.onDidChangeCursorSelection(() => updateToolbarScopeBadge());
   const editorResizeObserver = new ResizeObserver(() => requestEditorLayout(!paneResizeActive()));
   editorResizeObserver.observe($("editor"));
   registerAppCommands();
@@ -1293,26 +1766,104 @@ function bootstrap() {
   void initializeAppUpdate();
   // First paint can run before grid tracks resolve; force layout so Monaco is not 0×0.
   requestEditorLayout();
-  void restoreSession()
-    .then(async () => {
-      await syncSystemIntegrationPreferences();
+  // 先摘掉启动 splash，避免会话恢复/系统集成卡住时一直白屏
+  markAppReady();
+  log("Notra Monaco UI ready");
+  } catch (error) {
+    console.error(error);
+    try {
+      markAppReady();
+      const splash = document.getElementById("bootSplash");
+      if (splash) {
+        splash.innerHTML = `<div class="boot-card"><div>启动失败</div><div style="max-width:420px;font-weight:400;font-size:12px;opacity:.8">${
+          error instanceof Error ? error.message : String(error)
+        }</div></div>`;
+      }
+    } catch { /* ignore */ }
+    return;
+  }
+
+  const bootWork = (async () => {
+    try {
+      await withTimeout(restoreSession(), 8000, "恢复会话超时，已跳过");
+    } catch (error) {
+      log(`恢复会话失败：${error instanceof Error ? error.message : String(error)}`);
+    }
+    try {
+      await withTimeout(syncSystemIntegrationPreferences(), 5000, "同步系统集成超时");
+    } catch (error) {
+      log(`系统集成同步失败：${error instanceof Error ? error.message : String(error)}`);
+    }
+    try {
       await openStartupArgs();
       openRequestsReady = true;
       await drainOpenRequests();
-    })
-    .finally(() => {
-      markAppReady();
-      maybeShowShortcutTip();
-    });
-  log("Notra Monaco UI ready");
+    } catch (error) {
+      log(`启动参数处理失败：${error instanceof Error ? error.message : String(error)}`);
+      openRequestsReady = true;
+    }
+  })();
+
+  void bootWork.finally(() => {
+    maybeShowShortcutTip();
+    requestEditorLayout(true);
+  });
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, timeoutMessage: string): Promise<T | void> {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      log(timeoutMessage);
+      resolve(undefined);
+    }, ms);
+    promise.then(
+      (value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        window.clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 }
 
 function markAppReady() {
+  try {
+    bindChromeFastTips();
+    preferFastToolbarTips();
+  } catch { /* ignore */ }
+
+  // 始终尝试摘掉启动遮罩与卡住的交互态，避免"按钮全点不了"
+  try {
+    document.body.classList.remove(
+      "booting",
+      "theme-switching",
+      "resizing-explorer",
+      "resizing-sidebar",
+      "resizing-markdown-preview",
+    );
+    const app = document.getElementById("app");
+    app?.classList.remove("is-busy");
+    // 若 busy 深度已归零仍残留文案，清掉
+    if (typeof busyDepth === "number" && busyDepth <= 0) {
+      state.busyMessage = "";
+    }
+    document.getElementById("bootSplash")?.remove();
+    hideChromeTip();
+  } catch {
+    /* ignore */
+  }
   window.requestAnimationFrame(() => {
     window.requestAnimationFrame(() => {
-      requestEditorLayout();
-      document.body.classList.remove("booting");
-      $("bootSplash")?.remove();
+      try {
+        requestEditorLayout(true);
+        updateToolbarScopeBadge();
+        scheduleToolbarQuickTools();
+      } catch { /* ignore */ }
+      document.body.classList.remove("booting", "theme-switching");
+      document.getElementById("bootSplash")?.remove();
     });
   });
 }
@@ -1333,7 +1884,7 @@ function maybeShowShortcutTip() {
   };
   $("shortcutTipText").textContent = [
     `查找 ${label("search.find", "⌘F")}`,
-    `替换 ${label("search.replace", "⌘H")}`,
+    `替换 ${label("search.replace", "⌘H/⌘R")}`,
     `工作区查找 ${label("search.workspaceFind", "⌘⇧F")}`,
     `格式化 ${label("editor.formatDocument", "⇧⌥F")}`,
     `命令面板 ${label("navigation.commandPalette", "⌘⇧P")}`,
@@ -1603,6 +2154,9 @@ function registerAppCommands() {
     editorCommand("editor.moveLineDown", "向下移动行", "editor.action.moveLinesDownAction", editorOnly),
     editorCommand("editor.toggleLineComment", "切换行注释", "editor.action.commentLine", editorOnly),
     editorCommand("editor.toggleBlockComment", "切换块注释", "editor.action.blockComment", editorOnly),
+    command("editor.validateSyntax", "语法校验", "编辑", () => void validateActiveSyntax(), {
+      allowInInput: true,
+    }),
     command("editor.formatDocument", "格式化文档", "编辑", formatActiveDocument, {
       when: () => editorOnly() && isFormattingActionSupported(),
     }),
@@ -1610,6 +2164,28 @@ function registerAppCommands() {
       when: () => editorOnly() && isMinifyActionSupported(),
     }),
     command("toolbox.open", "打开工具箱", "编辑", openToolboxPage, { allowInInput: true }),
+    command("toolbox.jsonRepair", "语法修复", "编辑", () => void applyToolboxQuickItem("json-repair"), { allowInInput: true }),
+    command("toolbox.jsonRescue", "JSON 急救配方", "编辑", () => void applyToolboxQuickItem("recipe-json-fix"), { allowInInput: true }),
+    ...(() => {
+      const seen = new Set<string>(["json-repair", "recipe-json-fix"]);
+      const items = [
+        ...listToolboxItems("recipes"),
+        ...TOOLBOX_ITEMS.filter((item) => item.featured && !item.recipeSteps?.length),
+      ];
+      const commands = [];
+      for (const item of items) {
+        if (seen.has(item.id)) continue;
+        seen.add(item.id);
+        commands.push(command(
+          `toolbox.run.${item.id}`,
+          `工具：${item.title}`,
+          "编辑",
+          () => void applyToolboxQuickItem(item.id),
+          { allowInInput: true },
+        ));
+      }
+      return commands;
+    })(),
     editorCommand("editor.selectNextOccurrence", "选中下一个同词", "editor.action.addSelectionToNextFindMatch", editorOnly),
     editorCommand("editor.selectAllOccurrences", "选中所有同词", "editor.action.selectHighlights", editorOnly),
     editorCommand("editor.addCursorAbove", "在上方添加光标", "editor.action.insertCursorAbove", editorOnly),
@@ -1639,6 +2215,7 @@ function registerAppCommands() {
       enabled: () => Boolean(activeDocument().path),
     }),
     command("diff.compareFiles", "对比两个文件", "查找", () => void compareTwoFiles(), { allowInInput: true }),
+    command("diff.compareText", "快速对比文本", "查找", () => openTextDiffDialog(), { allowInInput: true }),
     command("diff.compareOpenTab", "与已打开标签对比", "查找", openCompareOpenTabMenu, {
       allowInInput: true,
       enabled: () => state.documents.length > 1,
@@ -1688,10 +2265,10 @@ function registerAppCommands() {
     command("view.toggleWordWrap", "切换自动换行", "视图", toggleWordWrap),
     command("view.toggleMinimap", "切换缩略图", "视图", toggleMinimap),
     command("view.toggleWhitespace", "切换空白符", "视图", cycleWhitespace),
-    command("view.zoomIn", "增大编辑器字号", "视图", () => setFontSize(state.fontSize + 1), { allowInInput: true }),
-    command("view.zoomOut", "减小编辑器字号", "视图", () => setFontSize(state.fontSize - 1), { allowInInput: true }),
-    command("view.zoomReset", "重置编辑器字号", "视图", () => setFontSize(DEFAULT_EDITOR_FONT_SIZE), { allowInInput: true }),
-    command("view.toggleTheme", "切换主题", "视图", toggleTheme, { allowInInput: true }),
+    command("view.zoomIn", "增大编辑器字号", "视图", () => setFontSize(state.fontSize + 1), { allowInInput: true, priority: 30 }),
+    command("view.zoomOut", "减小编辑器字号", "视图", () => setFontSize(state.fontSize - 1), { allowInInput: true, priority: 30 }),
+    command("view.zoomReset", "重置编辑器字号", "视图", () => resetEditorFontSize(), { allowInInput: true, priority: 40 }),
+    command("view.toggleTheme", "切换下一主题", "视图", toggleTheme, { allowInInput: true }),
     command("bookmark.toggle", "切换书签", "书签", toggleBookmark, { when: editorOnly }),
     command("bookmark.next", "下一个书签", "书签", () => navigateBookmark(1), { when: editorOnly }),
     command("bookmark.previous", "上一个书签", "书签", () => navigateBookmark(-1), { when: editorOnly }),
@@ -1861,21 +2438,25 @@ function isEditorSurfaceFocused() {
 function bindActions() {
   bindAppMenus();
   bindMarkdownContextMenu();
-  $("markdownPreview").addEventListener("click", handleMarkdownPreviewClick);
-  $("tree").addEventListener("scroll", scheduleSessionSave, { passive: true });
-  $("tree").addEventListener("click", (event) => {
+  bindEditorContextMenu();
+  try { bindToolbarOverflow(); } catch (error) { console.error("bindToolbarOverflow", error); }
+  document.getElementById("markdownPreview")?.addEventListener("click", handleMarkdownPreviewClick);
+  const treeEl = document.getElementById("tree");
+  treeEl?.addEventListener("scroll", scheduleSessionSave, { passive: true });
+  treeEl?.addEventListener("click", (event) => {
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>(".tree-item");
     if (!button) return;
     const path = button.dataset.path ?? "";
     if (button.classList.contains("dir")) toggleDirectoryCollapse(path);
     else if (button.classList.contains("file")) void openPath(path);
   });
-  $("tree").addEventListener("keydown", (event) => {
+  treeEl?.addEventListener("keydown", (event) => {
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>(".tree-item");
     if (button) void handleTreeItemKeydown(button, event as KeyboardEvent);
   });
   $("newButton").addEventListener("click", newDocument);
   $("openButton").addEventListener("click", openDocument);
+  document.getElementById("tabNewButton")?.addEventListener("click", newDocument);
   $("workspaceButton").addEventListener("click", () => void enterWorkspaceMode());
   $("saveButton").addEventListener("click", saveActive);
   $("saveAsButton").addEventListener("click", saveAsActive);
@@ -1885,11 +2466,54 @@ function bindActions() {
   $("uppercaseButton").addEventListener("click", transformToUppercase);
   $("lowercaseButton").addEventListener("click", transformToLowercase);
   $("formatDocumentButton").addEventListener("click", () => void formatActiveDocument());
-  $("toolboxButton").addEventListener("click", openToolboxPage);
+  document.getElementById("minifyDocumentButton")?.addEventListener("click", () => void minifyActiveDocument());
+  document.getElementById("validateSyntaxButton")?.addEventListener("click", () => void validateActiveSyntax());
+  document.getElementById("jsonRepairButton")?.addEventListener("click", () => void applyToolboxQuickItem("json-repair"));
+  $("toolboxButton").addEventListener("click", toggleToolboxPage);
   $("toolboxCloseButton").addEventListener("click", closeToolboxPage);
+  document.getElementById("toolboxQuickGroup")?.addEventListener("click", (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-toolbox-quick]");
+    if (!button) return;
+    const toolId = button.dataset.toolboxQuick as ToolboxItemId | undefined;
+    if (!toolId) return;
+    void applyToolboxQuickItem(toolId);
+  });
   $("toolboxPreviewButton").addEventListener("click", () => void previewSelectedToolboxItem());
   $("toolboxApplyButton").addEventListener("click", () => void applySelectedToolboxItem());
   $("toolboxCopyButton").addEventListener("click", () => void copyToolboxPreview());
+  // 复制按钮 Tab 回到列表首个工具项（搜索框已移除）
+  $("toolboxCopyButton").addEventListener("keydown", (e) => {
+    if ((e as KeyboardEvent).key === "Tab" && !(e as KeyboardEvent).shiftKey) {
+      e.preventDefault();
+      (document.querySelector<HTMLButtonElement>("#toolboxList .toolbox-item, #toolboxList .toolbox-convert-btn"))?.focus();
+    }
+  });
+
+  // 工具箱列表键盘导航（事件委托，绑一次即可）
+  $("toolboxList").addEventListener("keydown", (event) => {
+    const key = (event as KeyboardEvent).key;
+    if (key !== "ArrowDown" && key !== "ArrowUp" && key !== "Enter" && key !== " ") return;
+    const buttons = Array.from(
+      $("toolboxList").querySelectorAll<HTMLButtonElement>(".toolbox-item:not(:disabled)")
+    );
+    if (buttons.length === 0) return;
+    const current = document.activeElement as HTMLElement;
+    const idx = buttons.indexOf(current as HTMLButtonElement);
+    if (key === "ArrowDown") {
+      event.preventDefault();
+      buttons[(idx + 1) % buttons.length]?.focus();
+    } else if (key === "ArrowUp") {
+      event.preventDefault();
+      buttons[(idx - 1 + buttons.length) % buttons.length]?.focus();
+    } else if ((key === "Enter" || key === " ") && idx >= 0) {
+      // Enter/空格 = 选中，已在 click 监听器里处理选中后预览
+      // 双击 = 应用；单击 Enter 只是选中，再按 Alt+Enter 直接应用
+      if ((event as KeyboardEvent).altKey && key === "Enter") {
+        event.preventDefault();
+        void applySelectedToolboxItem();
+      }
+    }
+  });
   document.querySelectorAll<HTMLButtonElement>("[data-toolbox-scope]").forEach((button) => {
     button.addEventListener("click", () => {
       toolboxScope = (button.dataset.toolboxScope as ToolboxScope) || "selection";
@@ -1905,8 +2529,8 @@ function bindActions() {
       void previewSelectedToolboxItem();
     });
   });
-  ["toolboxPrefixInput", "toolboxSuffixInput", "toolboxDelimiterInput", "toolboxColumnInput", "toolboxPathInput"].forEach((id) => {
-    $(id).addEventListener("input", () => {
+  ["toolboxPrefixInput", "toolboxSuffixInput", "toolboxDelimiterInput", "toolboxColumnInput", "toolboxPathInput", "toolboxPatternInput", "toolboxFlagsInput", "toolboxCountInput"].forEach((id) => {
+    document.getElementById(id)?.addEventListener("input", () => {
       window.clearTimeout(toolboxPreviewTimer);
       toolboxPreviewTimer = window.setTimeout(() => void previewSelectedToolboxItem(), 180);
     });
@@ -1942,6 +2566,17 @@ function bindActions() {
   });
   $("compareDiskButton").addEventListener("click", () => void compareActiveWithDisk());
   $("compareOpenTabButton").addEventListener("click", openCompareOpenTabMenu);
+  document.getElementById("compareTextButton")?.addEventListener("click", () => openTextDiffDialog());
+  document.getElementById("textDiffCancelButton")?.addEventListener("click", closeTextDiffDialog);
+  document.getElementById("textDiffStartButton")?.addEventListener("click", () => void startTextDiffFromDialog());
+  document.getElementById("textDiffSwapButton")?.addEventListener("click", swapTextDiffDialogSides);
+  document.getElementById("textDiffLeftClear")?.addEventListener("click", () => { ($("textDiffLeftInput") as HTMLTextAreaElement).value = ""; });
+  document.getElementById("textDiffRightClear")?.addEventListener("click", () => { ($("textDiffRightInput") as HTMLTextAreaElement).value = ""; });
+  document.getElementById("textDiffLeftFromEditor")?.addEventListener("click", () => fillTextDiffPane("left"));
+  document.getElementById("textDiffRightFromEditor")?.addEventListener("click", () => fillTextDiffPane("right"));
+  document.getElementById("textDiffLeftPaste")?.addEventListener("click", () => void pasteIntoTextDiffPane("left"));
+  document.getElementById("textDiffRightPaste")?.addEventListener("click", () => void pasteIntoTextDiffPane("right"));
+
   $("diffCloseButton").addEventListener("click", closeDiffSession);
   $("diffSwapButton").addEventListener("click", swapDiffSides);
   $("diffLayoutButton").addEventListener("click", toggleDiffLayout);
@@ -1960,6 +2595,9 @@ function bindActions() {
   $("commandButton").addEventListener("click", () => openCommandPalette("commands"));
   $("goToLineButton").addEventListener("click", goToLine);
   $("wordWrapButton").addEventListener("click", toggleWordWrap);
+  document.getElementById("fontZoomOutButton")?.addEventListener("click", () => setFontSize(state.fontSize - 1));
+  document.getElementById("fontZoomInButton")?.addEventListener("click", () => setFontSize(state.fontSize + 1));
+  document.getElementById("fontZoomValueButton")?.addEventListener("click", () => resetEditorFontSize());
   $("findRailButton").addEventListener("click", () => {
     void openWorkspaceFind("workspace-find");
   });
@@ -2000,8 +2638,53 @@ function bindActions() {
     syncCurrentFindControls();
     replaceAllCurrentFile();
   });
+  // 展开/收起替换行的箭头按钮
+  document.getElementById("currentFindToggleReplace")?.addEventListener("click", () => {
+    const isReplace = state.findView === "replace";
+    setFindView(isReplace ? "find" : "replace");
+    renderCurrentFindMode();
+    if (!isReplace) {
+      // 展开替换行后自动跳到替换框
+      window.requestAnimationFrame(() => {
+        ($<HTMLInputElement>("currentReplaceInput")).focus();
+      });
+    } else {
+      ($<HTMLInputElement>("currentFindInput")).focus();
+    }
+  });
+
   $("currentFindInput").addEventListener("input", scheduleCurrentFind);
   $("currentReplaceInput").addEventListener("input", syncCurrentFindControls);
+  $("currentReplaceInput").addEventListener("keydown", (event) => {
+    const e = event as KeyboardEvent;
+    // Tab: 替换框 → 「替换」按钮
+    if (e.key === "Tab" && !e.shiftKey) {
+      event.preventDefault();
+      ($<HTMLButtonElement>("currentReplaceButton"))?.focus();
+      return;
+    }
+    // Shift+Tab: 替换框 → 查找框
+    if (e.key === "Tab" && e.shiftKey) {
+      event.preventDefault();
+      ($<HTMLInputElement>("currentFindInput")).focus();
+      return;
+    }
+    // Escape: 关闭查找栏
+    if (e.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      closeFind();
+      return;
+    }
+    if (e.key !== "Enter") return;
+    event.preventDefault();
+    syncCurrentFindControls();
+    if (e.ctrlKey || e.metaKey) {
+      replaceAllCurrentFile();
+    } else {
+      replaceCurrentFile();
+    }
+  });
   ["currentMatchCaseInput", "currentWholeWordInput", "currentRegexInput", "currentExtendedInput"].forEach((id) => {
     $(id).addEventListener("change", () => {
       if (id === "currentRegexInput" && ($("currentRegexInput") as HTMLInputElement).checked) {
@@ -2038,12 +2721,27 @@ function bindActions() {
         return;
       }
     }
+    // Tab: 替换模式下跳到替换框
+    if (keyboardEvent.key === "Tab" && !keyboardEvent.shiftKey && state.findView === "replace") {
+      event.preventDefault();
+      ($<HTMLInputElement>("currentReplaceInput")).focus();
+      return;
+    }
     if (keyboardEvent.key !== "Enter") return;
     event.preventDefault();
     syncCurrentFindControls();
     commitSearchHistory();
-    if (keyboardEvent.shiftKey) void findPreviousResult();
-    else void findNextResult();
+    if (state.findView === "replace") {
+      // 替换模式：Ctrl+Enter = 全部替换，普通 Enter = 替换当前并找下一个
+      if (keyboardEvent.ctrlKey || keyboardEvent.metaKey) {
+        replaceAllCurrentFile();
+      } else {
+        replaceCurrentFile();
+      }
+    } else {
+      if (keyboardEvent.shiftKey) void findPreviousResult();
+      else void findNextResult();
+    }
   });
   $("rightSearchToolButton").addEventListener("click", () => {
     const workspace = state.mode === "workspace" && Boolean(state.workspace);
@@ -2057,18 +2755,26 @@ function bindActions() {
   $("languageButton").addEventListener("click", () => toggleMenu("languageMenu"));
   $("encodingButton").addEventListener("click", () => toggleMenu("encodingMenu"));
   $("lineEndingButton").addEventListener("click", () => toggleMenu("lineEndingMenu"));
+  // 缩进按钮：快速切换空格大小 / Tab
+  document.getElementById("indentButton")?.addEventListener("click", openIndentMenu);
   $("recentButton").addEventListener("click", () => toggleMenu("recentMenu"));
   $("settingsButton").addEventListener("click", openSettingsPage);
   $("settingsCloseButton").addEventListener("click", closeSettingsPage);
   document.querySelectorAll<HTMLButtonElement>("[data-settings-section]").forEach((button) => {
     button.addEventListener("click", () => selectSettingsSection(button.dataset.settingsSection as SettingsSection));
   });
-  $("settingsThemeLight").addEventListener("click", () => setThemeMode(false));
-  $("settingsThemeDark").addEventListener("click", () => setThemeMode(true));
+  document.getElementById("settingsThemeGrid")?.addEventListener("click", (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-theme-id]");
+    const id = button?.dataset.themeId;
+    if (id && isAppThemeId(id)) setAppTheme(id);
+  });
   $("settingsShellFontMinus").addEventListener("click", () => setShellFontSize(state.shellFontSize - 1));
   $("settingsShellFontPlus").addEventListener("click", () => setShellFontSize(state.shellFontSize + 1));
   $("settingsFontMinus").addEventListener("click", () => setFontSize(state.fontSize - 1));
   $("settingsFontPlus").addEventListener("click", () => setFontSize(state.fontSize + 1));
+  document.getElementById("settingsFontValue")?.addEventListener("dblclick", () => resetEditorFontSize());
+  document.getElementById("settingsFontValue")?.setAttribute("title", "双击恢复默认字号（⌘0）");
+  document.getElementById("settingsFontReset")?.addEventListener("click", () => resetEditorFontSize());
   bindFontDropdown("settingsShellFontModeButton", "settingsShellFontModeMenu", (value) => setFontMode("shell", value));
   bindFontDropdown("settingsShellFontPresetButton", "settingsShellFontPresetMenu", (value) => setFontPreset("shell", value));
   bindFontDropdown("settingsEditorFontModeButton", "settingsEditorFontModeMenu", (value) => setFontMode("editor", value));
@@ -2079,6 +2785,9 @@ function bindActions() {
   bindSegmentedSetting("settingsMinimapControl", (value) => setMinimap(value === "on"));
   bindSegmentedSetting("settingsCaretAnimationControl", (value) => setSmoothCaretAnimation(value === "on"));
   bindSegmentedSetting("settingsWhitespaceControl", (value) => setWhitespace(value as RenderWhitespaceMode));
+  bindSegmentedSetting("settingsAutoSaveControl", (value) => setAutoSave(value === "on"));
+  bindSegmentedSetting("settingsTabSizeControl", (value) => setTabSize(Number(value)));
+  bindSegmentedSetting("settingsInsertSpacesControl", (value) => setInsertSpaces(value === "on"));
   bindSegmentedSetting("settingsKeymapProfileControl", (value) => setKeymapProfile(value));
   bindSegmentedSetting("settingsMarkdownWidthControl", (value) => setMarkdownContentWidth(value));
   bindSegmentedSetting("settingsMarkdownControl", (value) => setMarkdownEditMode(value as MarkdownEditMode));
@@ -2235,6 +2944,10 @@ function bindActions() {
         resolveConfirmDialog(false);
         return;
       }
+      if (!document.getElementById("textDiffDialog")?.classList.contains("hidden")) {
+        closeTextDiffDialog();
+        return;
+      }
       if (!$("inputDialog").classList.contains("hidden")) {
         resolveTextInputDialog(null);
         return;
@@ -2266,6 +2979,17 @@ function bindActions() {
       }
       if (!$("findPopover").classList.contains("hidden")) {
         closeFind();
+        return;
+      }
+      // 查找栏分层 Esc：替换模式 → 受起替换行；查找模式 → 关闭整个栏
+      if (!$("currentFindDock").classList.contains("hidden")) {
+        if (state.findView === "replace") {
+          setFindView("find");
+          renderCurrentFindMode();
+          ($<HTMLInputElement>("currentFindInput")).focus();
+        } else {
+          closeFind();
+        }
         return;
       }
       closeMenus();
@@ -2318,6 +3042,7 @@ function bindAppMenus() {
   bindMenuAction("menuUppercaseButton", transformToUppercase);
   bindMenuAction("menuLowercaseButton", transformToLowercase);
   bindMenuAction("menuFormatDocumentButton", () => void formatActiveDocument());
+  bindMenuAction("menuValidateSyntaxButton", () => void validateActiveSyntax());
   bindMenuAction("menuToolboxButton", openToolboxPage);
   bindMenuAction("menuSelectAllButton", selectAllEditor);
   bindMenuAction("menuFindButton", () => {
@@ -2333,10 +3058,14 @@ function bindAppMenus() {
   bindMenuAction("menuGoToLineButton", goToLine);
   bindMenuAction("menuCompareDiskButton", () => void compareActiveWithDisk());
   bindMenuAction("menuCompareFilesButton", () => void compareTwoFiles());
+  bindMenuAction("menuCompareTextButton", () => openTextDiffDialog());
   bindMenuAction("menuCompareOpenTabButton", openCompareOpenTabMenu);
   bindMenuAction("menuCloseDiffButton", closeDiffSession);
   bindMenuAction("menuCommandButton", openCommandPalette);
   bindMenuAction("menuWordWrapButton", toggleWordWrap);
+  bindMenuAction("menuFontZoomOutButton", () => setFontSize(state.fontSize - 1));
+  bindMenuAction("menuFontZoomInButton", () => setFontSize(state.fontSize + 1));
+  bindMenuAction("menuFontZoomResetButton", () => resetEditorFontSize());
   bindMenuAction("menuMarkdownWysiwygButton", () => setMarkdownEditMode("wysiwyg"));
   bindMenuAction("menuMarkdownSplitButton", () => setMarkdownEditMode("split"));
   bindMenuAction("menuMarkdownSourceButton", () => setMarkdownEditMode("source"));
@@ -2345,7 +3074,12 @@ function bindAppMenus() {
 }
 
 function bindMenuAction(id: string, action: () => void) {
-  $(id).addEventListener("click", () => {
+  const el = document.getElementById(id);
+  if (!el) {
+    console.warn(`[notra] missing menu button #${id}`);
+    return;
+  }
+  el.addEventListener("click", () => {
     closeMenus();
     action();
   });
@@ -2654,62 +3388,210 @@ function closeSettingsPage() {
   $("settingsButton").classList.remove("active");
 }
 
+function isToolboxOpen() {
+  return !$("toolboxPage").classList.contains("hidden");
+}
+
+function toggleToolboxPage() {
+  if (isToolboxOpen()) closeToolboxPage();
+  else openToolboxPage();
+}
+
 function openToolboxPage() {
   closeMenus();
   closeSettingsPage();
   $("commandPalette").classList.add("hidden");
-  const language = activeDocument().language;
-  if (language === "json") {
-    toolboxCategory = "json";
-    if (!String(toolboxSelectedId || "").startsWith("json") && !String(toolboxSelectedId || "").includes("json")) {
-      toolboxSelectedId = "json-pretty";
+  // 仅首次（用户尚未手动选过）按语言给默认；之后关闭再开回到上次工具
+  if (!toolboxRememberChoice) {
+    const language = activeDocument().language;
+    const hints = detectToolboxHints(activeDocument().model.getValue().slice(0, 20_000));
+    if (hints[0]) {
+      const item = getToolboxItem(hints[0].toolId);
+      if (item) {
+        toolboxCategory = item.category;
+        toolboxSelectedId = item.id;
+      }
+    } else if (language === "json") {
+      toolboxCategory = "json";
+      toolboxSelectedId = "json-sort-keys";
+    } else if (language === "sql") {
+      // 格式化在顶栏；工具箱给清理/配方
+      toolboxCategory = "recipes";
+      toolboxSelectedId = "recipe-sql-pack";
+    } else if (language === "xml" || language === "html") {
+      toolboxCategory = "encoding";
+      toolboxSelectedId = "html-decode";
+    } else if (language === "yaml" || language === "yml") {
+      toolboxCategory = "convert";
+      toolboxSelectedId = "yaml-to-json";
+    } else if (language === "toml") {
+      toolboxCategory = "convert";
+      toolboxSelectedId = "toml-to-json";
     }
-  } else if (language === "sql") {
-    toolboxCategory = "structure";
-    toolboxSelectedId = "sql-format";
+  } else if (toolboxSelectedId) {
+    const item = getToolboxItem(toolboxSelectedId);
+    if (item && isToolboxCatalogItem(item.id)) toolboxCategory = item.category;
+    else {
+      // 旧版本记住的内部工具已下线，回到可见目录。
+      toolboxSelectedId = listToolboxItems(toolboxCategory)[0]?.id ?? listToolboxItems()[0]?.id ?? null;
+      if (toolboxSelectedId) toolboxCategory = getToolboxItem(toolboxSelectedId)?.category ?? toolboxCategory;
+    }
   }
-  $("toolboxPage").classList.remove("hidden");
-  $("app").classList.add("toolbox-open");
-  $("toolboxButton").classList.add("active");
-  renderIconSlots($("toolboxPage"));
+  $('toolboxPage').classList.remove('hidden');
+  $('app').classList.add('toolbox-open');
+  $('toolboxButton').classList.add('active');
+  $('toolboxButton').setAttribute('aria-pressed', 'true');
+  // 无选区时自动切到「全文」避免用户困惑
+  const sel = editor.getSelection();
+  if (toolboxScope === 'selection' && (!sel || sel.isEmpty())) {
+    toolboxScope = 'file';
+  }
+  renderIconSlots($('toolboxPage'));
   renderToolboxPage();
   void previewSelectedToolboxItem();
+  // 列表滚到当前工具，强调「回到上次」
+  window.requestAnimationFrame(() => {
+    $("toolboxList").querySelector<HTMLElement>(".toolbox-item.active")?.scrollIntoView({ block: "nearest" });
+  });
+  requestEditorLayout(true);
 }
 
 function closeToolboxPage() {
+  // 记住当前分类与工具，下次打开直接进入
+  if (toolboxSelectedId) toolboxRememberChoice = true;
   $("toolboxPage").classList.add("hidden");
   $("app").classList.remove("toolbox-open");
   $("toolboxButton").classList.remove("active");
+  $("toolboxButton").setAttribute("aria-pressed", "false");
+  requestEditorLayout(true);
 }
 
+const TOOLBOX_CATEGORY_ICONS: Record<ToolboxCategoryId, string> = {
+  recipes: "ListTree",
+  json: "Braces",
+  convert: "RefreshCw",
+  dev: "Binary",
+  cleanup: "Eraser",
+  transform: "ListOrdered",
+  structure: "Code2",
+  encoding: "Link2",
+  csv: "Table2",
+  stats: "Sigma",
+};
+
+const TOOLBOX_CATEGORY_HINTS: Record<ToolboxCategoryId, string> = {
+  recipes: "多步组合，避免与单项重复",
+  json: "美化可用顶部格式化；这里含修复、类型、树视图",
+  convert: "YAML / TOML / Query 与 JSON 互转",
+  dev: "JWT、时间戳、哈希、正则、生成器、Cron、Diff",
+  cleanup: "空白、换行、去重、BOM",
+  transform: "行级变换；大小写也可在顶栏使用",
+  structure: "（已并入顶栏格式化/压缩）",
+  encoding: "URL / Base64 / Unicode / HTML 实体",
+  csv: "列提取与分隔符转换",
+  stats: "统计与简易指纹（标准哈希在「开发」）",
+};
+
 function renderToolboxPage() {
+  renderToolboxPinned();
   const nav = $("toolboxNav");
   nav.innerHTML = "";
   (Object.keys(TOOLBOX_CATEGORY_LABELS) as ToolboxCategoryId[]).forEach((category) => {
+    const count = listToolboxItems(category).length;
+    if (count === 0) return;
     const button = document.createElement("button");
     button.type = "button";
-    button.className = `toolbox-nav-item${category === toolboxCategory ? " active" : ""}`;
-    button.innerHTML = `<strong>${TOOLBOX_CATEGORY_LABELS[category]}</strong><span>${listToolboxItems(category).length} 项</span>`;
+    button.role = "tab";
+    button.className = `toolbox-tab${category === toolboxCategory ? " active" : ""}`;
+    button.setAttribute("aria-selected", String(category === toolboxCategory));
+    const icon = TOOLBOX_CATEGORY_ICONS[category] || "Wrench";
+    button.innerHTML = `<span class="icon-slot" data-icon="${icon}"></span><span>${TOOLBOX_CATEGORY_LABELS[category]}</span>`;
     button.addEventListener("click", () => {
+      toolboxRememberChoice = true;
       toolboxCategory = category;
-      const first = listToolboxItems(category)[0];
-      toolboxSelectedId = first?.id ?? null;
+      const items = listToolboxItems(category);
+      const keep = toolboxSelectedId && items.some((item) => item.id === toolboxSelectedId);
+      if (!keep) toolboxSelectedId = items[0]?.id ?? null;
       renderToolboxPage();
       void previewSelectedToolboxItem();
     });
     nav.appendChild(button);
   });
+  renderIconSlots(nav);
 
-  $("toolboxCategoryTitle").textContent = TOOLBOX_CATEGORY_LABELS[toolboxCategory];
-  $("toolboxCategoryDesc").textContent = toolboxCategory === "json"
-    ? "JSON 美化/压缩/排序/扁平化/路径取值/数组CSV/结构对比"
-    : toolboxCategory === "recipes"
-      ? "一键组合多个工具，适合日常收拾文本"
-      : "支持选区、整文件，或对当前查找命中逐条处理";
+  const itemsToShow: ToolboxItem[] = listToolboxItems(toolboxCategory);
+
+  $('toolboxCategoryTitle').textContent = TOOLBOX_CATEGORY_LABELS[toolboxCategory];
+  $('toolboxCategoryDesc').textContent = TOOLBOX_CATEGORY_HINTS[toolboxCategory] || '选择工具后预览再应用';
+
+  const selected = toolboxSelectedId ? getToolboxItem(toolboxSelectedId) : undefined;
+  const selectedTitle = document.getElementById("toolboxSelectedTitle");
+  if (selectedTitle) selectedTitle.textContent = selected?.title || "预览";
 
   const list = $("toolboxList");
   list.innerHTML = "";
-  for (const item of listToolboxItems(toolboxCategory)) {
+
+  // 转换分类用双向对布局
+  if (toolboxCategory === "convert") {
+    const pairs = [
+      { a: "yaml-to-json", b: "json-to-yaml", label: "YAML / JSON" },
+      { a: "toml-to-json", b: "json-to-toml", label: "TOML / JSON" },
+      { a: "query-to-json", b: "json-to-query", label: "Query / JSON" },
+    ];
+    for (const pair of pairs) {
+      const group = document.createElement("div");
+      group.className = "toolbox-convert-group";
+      const groupLabel = document.createElement("span");
+      groupLabel.className = "toolbox-convert-label";
+      groupLabel.textContent = pair.label;
+      group.appendChild(groupLabel);
+      for (const id of [pair.a, pair.b]) {
+        const item = getToolboxItem(id);
+        if (!item) continue;
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = `toolbox-convert-btn${id === toolboxSelectedId ? " active" : ""}`;
+        btn.textContent = item.title;
+        btn.title = item.description;
+        btn.addEventListener("click", () => {
+          toolboxRememberChoice = true;
+          toolboxSelectedId = id as import("./toolbox").ToolboxItemId;
+          renderToolboxPage();
+          void previewSelectedToolboxItem();
+        });
+        btn.addEventListener("dblclick", () => {
+          toolboxRememberChoice = true;
+          toolboxSelectedId = id as import("./toolbox").ToolboxItemId;
+          void applySelectedToolboxItem();
+        });
+        group.appendChild(btn);
+      }
+      list.appendChild(group);
+    }
+    renderToolboxScope();
+    renderToolboxParams();
+    return;
+  }
+
+  // 命中模式前置说明
+  if (toolboxScope === "matches") {
+    const hasQuery = Boolean(($<HTMLInputElement>("currentFindInput")).value ||
+                             ($<HTMLInputElement>("findInput")).value);
+    const matches = hasQuery ? getCurrentDocumentSearchMatches() : [];
+    const banner = document.createElement("div");
+    banner.className = "toolbox-matches-banner";
+    if (!hasQuery) {
+      banner.innerHTML = `<span class="icon-slot" data-icon="Info"></span><span>需要先在<strong>查找栏</strong>输入内容，再切到命中模式</span>`;
+    } else if (matches.length === 0) {
+      banner.innerHTML = `<span class="icon-slot" data-icon="SearchX"></span><span>当前无查找命中项</span>`;
+    } else {
+      banner.innerHTML = `<span class="icon-slot" data-icon="CheckCircle"></span><span>已命中 <strong>${matches.length}</strong> 处，工具将分别作用于每个命中文本</span>`;
+    }
+    list.insertBefore(banner, list.firstChild);
+    renderIconSlots(banner);
+  }
+
+  for (const item of itemsToShow) {
     const button = document.createElement("button");
     button.type = "button";
     const matchesBlocked = toolboxScope === "matches" && !toolboxSupportsMatches(item);
@@ -2717,20 +3599,42 @@ function renderToolboxPage() {
     button.disabled = matchesBlocked;
     const blockReason = matchesBlocked ? toolboxMatchesBlockReason(item) : null;
     button.title = blockReason || item.description;
-    button.innerHTML = `<strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(matchesBlocked ? `命中模式不可用 · ${item.description}` : item.description)}</span>`;
+    const favored = state.toolboxFavorites.includes(item.id);
+    const badge = item.destructive ? "慎用" : favored ? "收藏" : item.featured ? "常用" : item.generator ? "生成" : "";
+    button.innerHTML = `<strong>${escapeHtml(item.title)}</strong>${
+      badge ? `<span class="toolbox-item-badge">${badge}</span>` : ""
+    }<span>${escapeHtml(matchesBlocked ? `命中模式不可用 · ${item.description}` : item.description)}</span>`;
     button.addEventListener("click", () => {
       if (matchesBlocked) return;
+      toolboxRememberChoice = true;
       toolboxSelectedId = item.id;
       renderToolboxPage();
       void previewSelectedToolboxItem();
     });
     button.addEventListener("dblclick", () => {
       if (matchesBlocked) return;
+      toolboxRememberChoice = true;
       toolboxSelectedId = item.id;
       void applySelectedToolboxItem();
     });
+    button.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      toggleToolboxFavorite(item.id);
+    });
     list.appendChild(button);
   }
+
+  // 列表末尾 Tab 跳到预览按钮
+  const lastBtn = list.querySelector<HTMLButtonElement>('.toolbox-item:last-of-type');
+  if (lastBtn) {
+    lastBtn.addEventListener('keydown', (e) => {
+      if ((e as KeyboardEvent).key === 'Tab' && !(e as KeyboardEvent).shiftKey) {
+        e.preventDefault();
+        ($<HTMLButtonElement>('toolboxPreviewButton'))?.focus();
+      }
+    }, { once: false });
+  }
+
   renderToolboxScope();
   renderToolboxParams();
 }
@@ -2743,13 +3647,29 @@ function renderToolboxScope() {
 
 function renderToolboxParams() {
   const item = toolboxSelectedId ? getToolboxItem(toolboxSelectedId) : undefined;
-  const needs = item?.needsInput;
-  $("toolboxParams").classList.toggle("hidden", !needs);
-  $("toolboxPrefixField").classList.toggle("hidden", needs !== "prefix");
-  $("toolboxSuffixField").classList.toggle("hidden", needs !== "suffix");
-  $("toolboxDelimiterField").classList.toggle("hidden", needs !== "delimiter");
-  $("toolboxColumnField").classList.toggle("hidden", needs !== "column");
-  $("toolboxPathField").classList.toggle("hidden", needs !== "path");
+  const fields = new Set(toolboxItemFields(item));
+  $("toolboxParams").classList.toggle("hidden", fields.size === 0);
+  $("toolboxPrefixField").classList.toggle("hidden", !fields.has("prefix"));
+  $("toolboxSuffixField").classList.toggle("hidden", !fields.has("suffix"));
+  $("toolboxDelimiterField").classList.toggle("hidden", !fields.has("delimiter"));
+  $("toolboxColumnField").classList.toggle("hidden", !fields.has("column"));
+  $("toolboxPathField").classList.toggle("hidden", !fields.has("path"));
+  document.getElementById("toolboxPatternField")?.classList.toggle("hidden", !fields.has("pattern"));
+  document.getElementById("toolboxFlagsField")?.classList.toggle("hidden", !fields.has("flags"));
+  document.getElementById("toolboxCountField")?.classList.toggle("hidden", !fields.has("count"));
+
+  const pathLabel = document.getElementById("toolboxPathLabel");
+  if (pathLabel) pathLabel.textContent = "JSON 路径";
+  const countLabel = document.getElementById("toolboxCountLabel");
+  if (countLabel) countLabel.textContent = "数量";
+  const columnLabel = $("toolboxColumnField").querySelector("span");
+  if (columnLabel) {
+    columnLabel.textContent = item?.id === "password-generate" ? "长度" : "列号";
+  }
+  if (item?.id === "password-generate") {
+    const col = $("toolboxColumnInput") as HTMLInputElement;
+    if (!col.value || Number(col.value) < 8) col.value = "16";
+  }
 }
 
 function getToolboxSourceText(): string {
@@ -2811,6 +3731,9 @@ function toolboxAppliesToFullDocument() {
 function buildToolboxContext(): ToolboxContext {
   const doc = activeDocument();
   const options = doc.model.getOptions();
+  const patternEl = document.getElementById("toolboxPatternInput") as HTMLInputElement | null;
+  const flagsEl = document.getElementById("toolboxFlagsInput") as HTMLInputElement | null;
+  const countEl = document.getElementById("toolboxCountInput") as HTMLInputElement | null;
   return {
     language: doc.language,
     lineEnding: (doc.lineEnding as "LF" | "CRLF" | "CR") || "LF",
@@ -2821,6 +3744,9 @@ function buildToolboxContext(): ToolboxContext {
     delimiter: ($("toolboxDelimiterInput") as HTMLInputElement).value || undefined,
     columnIndex: Number(($("toolboxColumnInput") as HTMLInputElement).value || "1"),
     path: ($("toolboxPathInput") as HTMLInputElement).value || undefined,
+    pattern: patternEl?.value || undefined,
+    flags: flagsEl?.value || undefined,
+    count: Number(countEl?.value || "1"),
   };
 }
 
@@ -2868,11 +3794,14 @@ async function executeToolboxItem(item: ToolboxItem, input: string) {
 
 async function previewSelectedToolboxItem() {
   const item = toolboxSelectedId ? getToolboxItem(toolboxSelectedId) : undefined;
+  const selectedTitle = document.getElementById("toolboxSelectedTitle");
   if (!item) {
+    if (selectedTitle) selectedTitle.textContent = "预览";
     $("toolboxPreviewMeta").textContent = "选择一个工具";
     ($("toolboxPreview") as HTMLTextAreaElement).value = "";
     return;
   }
+  if (selectedTitle) selectedTitle.textContent = item.title;
   renderToolboxParams();
   if (toolboxScope === "matches") {
     const blocked = toolboxMatchesBlockReason(item);
@@ -2921,6 +3850,7 @@ async function previewSelectedToolboxItem() {
       return;
     } catch (error) {
       toolboxLastPreviewText = "";
+      toolboxLastReplace = false;
       $("toolboxPreviewMeta").textContent = `失败：${error instanceof Error ? error.message : String(error)}`;
       ($("toolboxPreview") as HTMLTextAreaElement).value = String(error);
       return;
@@ -2930,8 +3860,9 @@ async function previewSelectedToolboxItem() {
   try {
     const result = await executeToolboxItem(item, input);
     if (!result.ok) {
+      // 失败绝不能标记为可写回，否则会把全文替换成空串
       toolboxLastPreviewText = "";
-      toolboxLastReplace = true;
+      toolboxLastReplace = false;
       $("toolboxPreviewMeta").textContent = `失败：${result.error}`;
       ($("toolboxPreview") as HTMLTextAreaElement).value = result.error;
       return;
@@ -2950,9 +3881,59 @@ async function previewSelectedToolboxItem() {
     ($("toolboxPreview") as HTMLTextAreaElement).value = result.text;
   } catch (error) {
     toolboxLastPreviewText = "";
+    toolboxLastReplace = false;
     $("toolboxPreviewMeta").textContent = `失败：${error instanceof Error ? error.message : String(error)}`;
     ($("toolboxPreview") as HTMLTextAreaElement).value = String(error);
   }
+}
+
+function getToolboxTargetRange(): { fullDocument: boolean; range: monaco.Range; source: string } {
+  const doc = activeDocument();
+  const selection = editor.getSelection();
+  if (selection && !selection.isEmpty()) {
+    return {
+      fullDocument: false,
+      range: selection,
+      source: doc.model.getValueInRange(selection),
+    };
+  }
+  const full = doc.model.getValue();
+  const lineCount = Math.max(1, doc.model.getLineCount());
+  return {
+    fullDocument: true,
+    range: new monaco.Range(1, 1, lineCount, doc.model.getLineMaxColumn(lineCount)),
+    source: full,
+  };
+}
+
+async function writeToolboxResult(
+  item: ToolboxItem,
+  nextText: string,
+  target: { fullDocument: boolean; range: monaco.Range },
+  originDocId?: number,
+) {
+  const doc = activeDocument();
+  // 竟杀前验证：异步间隔内用户切换了标签页则放弃写回
+  if (originDocId !== undefined && doc.id !== originDocId) {
+    log(`工具箱结果未写回：执行期间已切换标签页（${item.title}）`);
+    return;
+  }
+  if (target.fullDocument) {
+    replaceModelText(doc.model, nextText);
+  } else {
+    if (doc.model.isDisposed()) return;
+    editor.pushUndoStop();
+    editor.executeEdits("toolbox-apply", [{
+      range: target.range,
+      text: nextText,
+      forceMoveMarkers: true,
+    }]);
+    editor.pushUndoStop();
+  }
+  editor.focus();
+  log(`工具箱已应用：${item.title}${target.fullDocument ? "（全文）" : "（选区）"}`);
+  renderChrome();
+  await autoSaveIfOnDisk(doc, "工具修改后已保存");
 }
 
 async function applySelectedToolboxItem() {
@@ -2963,6 +3944,7 @@ async function applySelectedToolboxItem() {
     return;
   }
   const doc = activeDocument();
+  const docId = doc.id;
   if (doc.readOnly || isMarkdownWysiwygActive(doc)) {
     log(doc.readOnly ? "只读文档无法应用工具箱" : "请先切换到源码模式");
     return;
@@ -2988,11 +3970,13 @@ async function applySelectedToolboxItem() {
         okLabel: "应用",
       });
       if (!confirmed) return;
+      if (activeDocument().id !== docId) { log(`工具箱结果未写回：确认期间已切换标签（${item.title}）`); return; }
     }
     const edits: monaco.editor.IIdentifiedSingleEditOperation[] = [];
     let changed = 0;
     for (const match of [...matches].sort((a, b) => b.start - a.start)) {
       const result = await executeToolboxItem(item, match.matchedText);
+      if (activeDocument().id !== docId) { log(`工具箱中断：执行期间已切换标签（${item.title}）`); return; }
       if (!result.ok) {
         log(`应用失败：${result.error}`);
         return;
@@ -3015,6 +3999,7 @@ async function applySelectedToolboxItem() {
       log("命中内容无变化");
       return;
     }
+    if (doc.model.isDisposed()) return;
     editor.pushUndoStop();
     editor.executeEdits("toolbox-apply-matches", edits);
     editor.pushUndoStop();
@@ -3026,57 +4011,110 @@ async function applySelectedToolboxItem() {
     return;
   }
 
+  // 有选区→选区，无选区→全文；失败只提示，绝不写回空串
+  const target = toolboxScope === "file"
+    ? {
+        fullDocument: true,
+        range: (() => {
+          const lineCount = Math.max(1, doc.model.getLineCount());
+          return new monaco.Range(1, 1, lineCount, doc.model.getLineMaxColumn(lineCount));
+        })(),
+        source: doc.model.getValue(),
+      }
+    : getToolboxTargetRange();
+
+  const result = await executeToolboxItem(item, target.source);
   await previewSelectedToolboxItem();
-  if (!toolboxLastReplace) {
-    log("该工具仅预览/统计，不会写回编辑器");
+  if (activeDocument().id !== docId) {
+    log(`工具箱结果未写回：执行期间已切换标签（${item.title}）`);
     return;
   }
-  const source = getToolboxSourceText();
-  if (source === toolboxLastPreviewText) {
+  if (!result.ok) {
+    log(`应用失败：${result.error}`);
+    return;
+  }
+  if (result.replace === false) {
+    log(result.message || "该工具仅预览/统计，不会写回编辑器");
+    return;
+  }
+  if (result.text === target.source) {
     log("内容无变化");
     return;
   }
 
-  const fullDocument = toolboxAppliesToFullDocument();
-  if (toolboxScope === "selection" && toolboxSelectionIsEmpty()) {
+  if (item.destructive) {
     const confirmed = await askConfirm({
-      title: "无选区，将应用到全文？",
+      title: "确认执行破坏性变换",
       subtitle: item.title,
-      body: "当前作用范围为「选区」，但没有选中文本。继续将修改整个文件。此操作可撤销。",
-      danger: !!item.destructive,
-      okLabel: "应用到全文",
-    });
-    if (!confirmed) return;
-  } else if (item.destructive || (fullDocument && (item.destructive || item.id.startsWith("recipe-")))) {
-    const confirmed = await askConfirm({
-      title: item.destructive ? "确认执行破坏性变换" : "确认应用到全文",
-      subtitle: item.title,
-      body: fullDocument
+      body: target.fullDocument
         ? `「${item.title}」将修改整个文件。此操作可撤销。`
         : `「${item.title}」将修改当前选区。此操作可撤销。`,
-      danger: !!item.destructive,
+      danger: true,
       okLabel: "应用",
     });
     if (!confirmed) return;
+    if (activeDocument().id !== docId) { log(`工具箱结果未写回：确认期间已切换标签（${item.title}）`); return; }
   }
 
-  if (fullDocument) {
-    replaceModelText(doc.model, toolboxLastPreviewText);
-  } else {
-    const selection = editor.getSelection();
-    if (!selection) return;
-    editor.pushUndoStop();
-    editor.executeEdits("toolbox-apply", [{
-      range: selection,
-      text: toolboxLastPreviewText,
-      forceMoveMarkers: true,
-    }]);
-    editor.pushUndoStop();
-  }
-  editor.focus();
+  await writeToolboxResult(item, result.text, target, docId);
   closeToolboxPage();
-  log(`工具箱已应用：${item.title}`);
-  renderChrome();
+}
+
+/** 顶部工具栏快捷：有选区改选区，无选区改全文；失败只提示不写回 */
+async function applyToolboxQuickItem(toolId: ToolboxItemId) {
+  const item = getToolboxItem(toolId);
+  if (!item) {
+    log(`未知工具：${toolId}`);
+    return;
+  }
+  rememberToolboxUse(toolId);
+  if (diffSession) {
+    log("对比模式下请先关闭 Diff 再使用工具");
+    return;
+  }
+  const doc = activeDocument();
+  const docId = doc.id;
+  if (doc.readOnly || isMarkdownWysiwygActive(doc)) {
+    log(doc.readOnly ? "只读文档无法应用工具" : "请先切换到源码模式");
+    return;
+  }
+  if (item.action) {
+    await executeToolboxItem(item, doc.model.getValue());
+    return;
+  }
+
+  const target = getToolboxTargetRange();
+  const result = await executeToolboxItem(item, target.source);
+  if (activeDocument().id !== docId) {
+    log(`工具箱结果未写回：执行期间已切换标签（${item.title}）`);
+    return;
+  }
+  if (!result.ok) {
+    log(result.error);
+    return;
+  }
+  if (result.replace === false) {
+    log(result.message || `${item.title}：完成（未修改文本）`);
+    return;
+  }
+  if (result.text === target.source) {
+    log("内容无变化");
+    return;
+  }
+  if (item.destructive) {
+    const confirmed = await askConfirm({
+      title: "确认执行破坏性变换",
+      subtitle: item.title,
+      body: target.fullDocument
+        ? `「${item.title}」将修改整个文件。此操作可撤销。`
+        : `「${item.title}」将修改当前选区。此操作可撤销。`,
+      danger: true,
+      okLabel: "应用",
+    });
+    if (!confirmed) return;
+    if (activeDocument().id !== docId) { log(`工具箱结果未写回：确认期间已切换标签（${item.title}）`); return; }
+  }
+  await writeToolboxResult(item, result.text, target, docId);
 }
 
 async function copyToolboxPreview() {
@@ -3324,7 +4362,7 @@ async function toggleShellIntegration() {
     state.shellIntegration = await invoke<ShellIntegrationStatusDto>("set_shell_integration", { enabled });
     state.contextMenuEnabled = enabled;
     scheduleSessionSave();
-    log(enabled ? "已添加“以 Notra 打开”右键菜单" : "已移除“以 Notra 打开”右键菜单");
+    log(enabled ? '已添加"以 Notra 打开"右键菜单' : '已移除"以 Notra 打开"右键菜单');
   } catch (error) {
     state.shellIntegration.detail = integrationErrorMessage(`${enabled ? "添加" : "移除"}右键菜单`, error);
     log(state.shellIntegration.detail);
@@ -3385,14 +4423,53 @@ function bindOpenRequestListener() {
 }
 
 function setThemeMode(darkMode: boolean) {
-  state.darkMode = darkMode;
-  document.body.classList.toggle("dark", state.darkMode);
-  monaco.editor.setTheme(state.darkMode ? "notra-dark" : "notra-light");
+  // 兼容旧调用：在浅/深两组内回退到代表主题
+  setAppTheme(darkMode ? "midnight" : "paper");
+}
+
+function setAppTheme(themeId: string) {
+  const resolved = resolveAppThemeId(themeId);
+  if (!resolved) return;
+  const theme = getAppTheme(resolved);
+  // 切换瞬间关掉过渡，避免壳层与 Monaco 主题不同步闪烁
+  document.body.classList.add("theme-switching");
+  state.themeId = theme.id;
+  state.darkMode = theme.dark;
+  document.body.dataset.theme = theme.id;
+  document.body.classList.toggle("dark", theme.dark);
+  try {
+    monaco.editor.setTheme(theme.monaco);
+  } catch {
+    monaco.editor.setTheme(theme.dark ? "notra-midnight" : "notra-paper");
+  }
   markdownEditor?.updateAppearance(state.darkMode, state.fontSize, resolveEditorFontStack());
   if (isMarkdownPreviewEnabled()) void renderMarkdownPreview();
   setThemeButton();
   renderSettingsMenu();
   scheduleSessionSave();
+  try {
+    renderedTabsSignature = "";
+    renderTabs();
+    renderChrome();
+  } catch { /* ignore */ }
+  window.requestAnimationFrame(() => {
+    try {
+      requestEditorLayout(true);
+      revealActiveTab?.();
+      scheduleToolbarOverflowLayout();
+      preferFastToolbarTips();
+    } catch { /* ignore */ }
+    window.setTimeout(() => document.body.classList.remove("theme-switching"), 180);
+  });
+}
+
+function cycleAppTheme() {
+  const order = APP_THEMES.map((theme) => theme.id);
+  const index = order.indexOf(state.themeId);
+  const next = order[(index + 1) % order.length] ?? DEFAULT_APP_THEME;
+  setAppTheme(next);
+  const theme = getAppTheme(next);
+  notify(`主题：${theme.label} · ${theme.description}`, "success");
 }
 
 function setShellFontSize(size: number) {
@@ -3535,6 +4612,7 @@ function toggleTitlebarMaximize() {
 }
 
 function bindExplorerResize() {
+  if (!WORKSPACE_SIDEBAR_ENABLED) return;
   const handle = $("explorerResize");
   handle.addEventListener("pointerdown", (event) => {
     if (event.button !== 0) return;
@@ -3902,12 +4980,16 @@ async function withBusy<T>(
 
 function setBusy(message: string) {
   state.busyMessage = message;
-  $("app").classList.toggle("is-busy", Boolean(message));
-  if (editor) {
-    editor.updateOptions({ readOnly: editorBusyDepth > 0 || activeDocument().readOnly });
+  try {
+    document.getElementById("app")?.classList.toggle("is-busy", Boolean(message));
+    const doc = activeDocument();
+    const readOnly = editorBusyDepth > 0 || Boolean(doc?.readOnly);
+    if (editor) editor.updateOptions({ readOnly });
+    markdownEditor?.setReadOnly(readOnly);
+    renderChrome();
+  } catch (error) {
+    console.error("setBusy failed", error);
   }
-  markdownEditor?.setReadOnly(editorBusyDepth > 0 || activeDocument().readOnly);
-  renderChrome();
 }
 
 function createDocument(
@@ -3942,6 +5024,7 @@ function createDocument(
     scheduleMarkdownPreviewRender();
     if (doc.id === state.activeId) scheduleMarkdownEditorSync(doc);
     scheduleSessionSave();
+    scheduleAutoSave(doc);
   });
   return doc;
 }
@@ -3967,6 +5050,7 @@ function nextUntitledTitle(extension = "txt") {
 }
 
 function activateDocument(id: number) {
+  scheduleToolbarQuickTools();
   const doc = state.documents.find((item) => item.id === id);
   if (!doc) return;
   if (diffSession) closeDiffSession();
@@ -4076,6 +5160,18 @@ function addOrReplaceDocument(dto: DocumentDto, origin: DocumentOrigin) {
 async function saveActive() {
   const doc = activeDocument();
   await saveDocument(doc, false);
+}
+
+/** 已有磁盘路径的文档：格式化/工具改写后默认自动保存 */
+async function autoSaveIfOnDisk(doc = activeDocument(), reason = "自动保存") {
+  if (!doc || doc.readOnly || !doc.path) return false;
+  if (doc.model.isDisposed()) return false;
+  syncMarkdownModelFromEditor(doc);
+  // dirty 可能尚未刷新，直接对比 savedText
+  if (doc.model.getValue() === doc.savedText) return false;
+  const ok = await saveDocument(doc, false);
+  if (ok) log(`${reason}：${doc.title}`);
+  return Boolean(ok);
 }
 
 async function saveAsActive() {
@@ -4385,8 +5481,11 @@ function showContextMenu(menu: HTMLElement, event: MouseEvent, fallbackWidth: nu
 }
 
 function activeContextMenu() {
+  const editorMenu = document.getElementById("editorContextMenu");
+  if (editorMenu && !editorMenu.classList.contains("hidden")) return editorMenu;
   return [
     $("tabOverflowMenu"),
+    document.getElementById("toolbarOverflowMenu") as HTMLElement,
     $("tabMenu"),
     $("treeMenu"),
     $("markdownContextMenu"),
@@ -4396,7 +5495,7 @@ function activeContextMenu() {
     $("editMenu"),
     $("searchMenu"),
     $("viewMenu"),
-  ].find(
+  ].filter(Boolean).find(
     (menu) => !menu.classList.contains("hidden"),
   ) ?? null;
 }
@@ -4993,6 +6092,8 @@ function removeCollapsedDirsForDeletedPath(path: string) {
 }
 
 function setLanguage(language: string) {
+  // 顶栏快捷随语言变化
+  queueMicrotask(() => scheduleToolbarQuickTools());
   const doc = activeDocument();
   doc.language = language;
   monaco.editor.setModelLanguage(doc.model, language);
@@ -5418,6 +6519,8 @@ function replaceAllCurrentFile() {
 }
 
 function currentReplaceContext() {
+  const currentDockOpen = !$('currentFindDock').classList.contains('hidden');
+  if (!isWorkspaceFindView() && currentDockOpen) syncCurrentFindControls();
   const query = ($("findInput") as HTMLInputElement).value;
   const replacement = ($("replaceInput") as HTMLInputElement).value;
   if (!query) {
@@ -5945,7 +7048,14 @@ function applyEditorPerformanceProfile(doc: OpenDocument) {
     fontFamily: editorFont,
     fontSize: state.fontSize,
     lineHeight: editorLineHeight(),
+    tabSize: state.tabSize,
+    insertSpaces: state.insertSpaces,
+    detectIndentation: false,
+    // 普通文件不截断；超大文件保留上限，防止单行拖垮渲染
+    stopRenderingLineAfter: large ? 20000 : -1,
     folding: !large,
+    foldingStrategy: "auto",
+    showFoldingControls: large ? "never" : "always",
     links: !large,
     // Keep current-word occurrences available for large documents too. The
     // heavier selection and suggestion features remain disabled below.
@@ -6140,10 +7250,30 @@ function renderTabs() {
 }
 
 function renderChrome() {
+  try {
+  $<HTMLButtonElement>("menuCloseWorkspaceButton").disabled = !state.workspace;
   const doc = activeDocument();
   setButtonLabel("wordWrapButton", "自动换行", `自动换行 ${state.wordWrap ? "已开启" : "已关闭"}`);
   $("wordWrapButton").classList.toggle("state-on", state.wordWrap);
   $("wordWrapButton").setAttribute("aria-pressed", String(state.wordWrap));
+  const fontZoomLabel = document.getElementById("fontZoomValueLabel");
+  if (fontZoomLabel) fontZoomLabel.textContent = String(state.fontSize);
+  const fontZoomValueButton = document.getElementById("fontZoomValueButton");
+  if (fontZoomValueButton) {
+    const isDefault = state.fontSize === DEFAULT_EDITOR_FONT_SIZE;
+    fontZoomValueButton.dataset.default = String(isDefault);
+    fontZoomValueButton.title = isDefault
+      ? `字号 ${state.fontSize}px（默认）· 点击不变`
+      : `字号 ${state.fontSize}px · 点击恢复默认 ${DEFAULT_EDITOR_FONT_SIZE}px（⌘0）`;
+    fontZoomValueButton.setAttribute(
+      "aria-label",
+      isDefault ? `当前字号 ${state.fontSize}px（默认）` : `当前字号 ${state.fontSize}px，点击恢复默认`,
+    );
+  }
+  const fontZoomOut = document.getElementById("fontZoomOutButton") as HTMLButtonElement | null;
+  const fontZoomIn = document.getElementById("fontZoomInButton") as HTMLButtonElement | null;
+  if (fontZoomOut) fontZoomOut.disabled = state.fontSize <= 11;
+  if (fontZoomIn) fontZoomIn.disabled = state.fontSize >= 24;
   setButtonLabel("languageButton", languageLabel(doc.language), `语言 ${languageLabel(doc.language)}`);
   setButtonLabel("encodingButton", doc.encoding, `编码 ${doc.encoding}`);
   $("encodingNotice").textContent = `${doc.encodingStatus} ${doc.encoding}`;
@@ -6167,6 +7297,13 @@ function renderChrome() {
   $<HTMLButtonElement>("menuLowercaseButton").disabled = doc.readOnly;
   $<HTMLButtonElement>("formatDocumentButton").disabled = doc.readOnly || !isFormattingActionSupported();
   $<HTMLButtonElement>("menuFormatDocumentButton").disabled = doc.readOnly || !isFormattingActionSupported();
+  const minifyButton = document.getElementById("minifyDocumentButton") as HTMLButtonElement | null;
+  if (minifyButton) minifyButton.disabled = doc.readOnly || !isMinifyActionSupported(doc);
+  const validateButton = document.getElementById("validateSyntaxButton") as HTMLButtonElement | null;
+  if (validateButton) validateButton.disabled = !isSyntaxValidationSupported(doc);
+  // 顶栏快捷工具随语言/只读状态刷新（内部会重建按钮）
+  scheduleToolbarQuickTools();
+  scheduleToolbarOverflowLayout();
   $<HTMLButtonElement>("workspaceFindToolButton").disabled = !state.workspace;
   $<HTMLButtonElement>("batchEditButton").disabled = doc.readOnly || isMarkdownWysiwygActive(doc);
   $<HTMLButtonElement>("compareDiskButton").disabled = !doc.path;
@@ -6203,29 +7340,57 @@ function renderChrome() {
     ? `<span class="busy-pill">${iconSvg("LoaderCircle")}${escapeHtml(state.busyMessage)}</span>`
     : state.keybindingHint
       ? `<span class="keybinding-hint">${escapeHtml(state.keybindingHint)}</span>`
+      : statusNoticeText
+        ? `<span class="status-notice">${escapeHtml(statusNoticeText)}</span>`
       : "";
   $("statusDocumentState").textContent = diffSession
     ? `对比中 · ${diffSession.leftLabel} ↔ ${diffSession.rightLabel}`
     : [doc.readOnly ? "只读" : "", doc.encodingStatus]
       .filter(Boolean)
       .join(" · ");
-  $("statusRight").innerHTML = diffSession
+  $('statusRight').innerHTML = diffSession
     ? [
       `${diffSession.changeCount} 处变更`,
-      diffSession.renderSideBySide ? "并排" : "内联",
-      diffSession.ignoreWhitespace ? "忽略空白" : "保留空白",
-      "F7/⇧F7 跳转",
-      "Esc 关闭",
+      diffSession.renderSideBySide ? '并排' : '内联',
+      diffSession.ignoreWhitespace ? '忽略空白' : '保留空白',
+      isApplePlatform() ? 'F7/⇧F7 跳转' : 'F7/Shift+F7 跳转',
+      'Esc 关闭',
     ].map((item) => `<span>${item}</span>`).join(`<span class="dot"></span>`)
-    : [
-      `第 ${editor.getPosition()?.lineNumber ?? 1} 行，第 ${editor.getPosition()?.column ?? 1} 列`,
-      `${doc.model.getLineCount()} 行`,
-      `${doc.model.getValueLength()} 字符`,
-      `${formatBytes(doc.fileSize)}`,
-    ].map((item) => `<span>${item}</span>`).join(`<span class="dot"></span>`);
+    : (() => {
+        const pos = editor.getPosition();
+        const sel = editor.getSelection();
+        const hasSel = sel && !sel.isEmpty();
+        const selChars = hasSel ? doc.model.getValueLengthInRange(sel) : 0;
+        const selLines = hasSel ? Math.abs(sel.endLineNumber - sel.startLineNumber) + 1 : 0;
+        const parts = hasSel
+          ? [
+              `第 ${pos?.lineNumber ?? 1} 行，第 ${pos?.column ?? 1} 列`,
+              `已选 ${selChars} 字${selLines > 1 ? ` (${selLines} 行)` : ''}`,
+              `共 ${doc.model.getLineCount()} 行`,
+            ]
+          : [
+              `第 ${pos?.lineNumber ?? 1} 行，第 ${pos?.column ?? 1} 列`,
+              `共 ${doc.model.getLineCount()} 行`,
+              `${doc.model.getValueLength()} 字符`,
+              `${formatBytes(doc.fileSize)}`,
+            ];
+        return parts.map((item) => `<span>${item}</span>`).join(`<span class="dot"></span>`);
+      })();
+  // 状态栏缩进按钮
+  const indentBtn = document.getElementById('indentButton');
+  if (indentBtn) {
+    const label = state.insertSpaces ? `空格 ${state.tabSize}` : `Tab 大小 ${state.tabSize}`;
+    indentBtn.querySelector('[data-label]')!.textContent = label;
+    indentBtn.title = state.insertSpaces ? `缩进：${state.tabSize} 个空格（点击切换）` : `缩进：Tab（点击切换）`;
+  }
   renderShortcutHints();
   renderEditorQuickStart();
   renderDiffToolbar();
+  preferFastToolbarTips();
+
+  } catch (error) {
+    console.error("renderChrome failed", error);
+  }
 }
 
 function commandElementIds(): Record<string, string> {
@@ -6242,14 +7407,22 @@ function commandElementIds(): Record<string, string> {
   uppercaseButton: "edit.uppercase",
   lowercaseButton: "edit.lowercase",
   formatDocumentButton: "editor.formatDocument",
+  minifyDocumentButton: "editor.minifyDocument",
+  validateSyntaxButton: "editor.validateSyntax",
+  jsonRepairButton: "toolbox.jsonRepair",
   toolboxButton: "toolbox.open",
   findButton: "search.find",
   replaceButton: "search.replace",
   workspaceFindToolButton: "search.workspaceFind",
   compareDiskButton: "diff.compareWithDisk",
   compareOpenTabButton: "diff.compareOpenTab",
+  compareTextButton: "diff.compareText",
   goToLineButton: "navigation.goToLine",
   commandButton: "navigation.commandPalette",
+  wordWrapButton: "view.toggleWordWrap",
+  fontZoomOutButton: "view.zoomOut",
+  fontZoomInButton: "view.zoomIn",
+  fontZoomValueButton: "view.zoomReset",
   findRailButton: "search.workspaceFind",
   menuCompareDiskButton: "diff.compareWithDisk",
   menuCompareFilesButton: "diff.compareFiles",
@@ -6289,6 +7462,9 @@ function commandElementIds(): Record<string, string> {
 }
 
 function renderShortcutHints() {
+  // 这些按钮的 title 由其它逻辑动态管理，只更新 <small> 和 aria-keyshortcuts
+  const DYNAMIC_TITLE_IDS = new Set(["wordWrapButton", "fontZoomValueButton"]);
+
   for (const [elementId, commandId] of Object.entries(commandElementIds())) {
     const element = document.getElementById(elementId) as HTMLButtonElement | null;
     const item = appCommands.get(commandId);
@@ -6297,8 +7473,10 @@ function renderShortcutHints() {
     const label = binding ? bindingLabel(binding) : "";
     const small = element.querySelector("small");
     if (small) small.textContent = label;
-    element.title = label ? `${item.title} ${label}` : item.title;
-    element.setAttribute("aria-label", element.title);
+    if (!DYNAMIC_TITLE_IDS.has(elementId)) {
+      element.title = label ? `${item.title} ${label}` : item.title;
+      element.setAttribute("aria-label", element.title);
+    }
     if (binding && !binding.includes(" ")) element.setAttribute("aria-keyshortcuts", ariaKeyShortcut(binding));
     else element.removeAttribute("aria-keyshortcuts");
   }
@@ -6348,7 +7526,7 @@ function renderWorkspace() {
 
 function renderWorkspaceTree() {
   if (!state.workspace) {
-    $("tree").innerHTML = `<div class="empty">鏈墦寮€鐩綍</div>`;
+    $("tree").innerHTML = `<div class="empty">未打开目录</div>`;
     return;
   }
   const activePath = activeDocument().path;
@@ -6448,8 +7626,7 @@ function renderSettingsMenu() {
   document.querySelectorAll<HTMLElement>("[data-settings-panel]").forEach((panel) => {
     panel.classList.toggle("active", panel.dataset.settingsPanel === state.settingsSection);
   });
-  $("settingsThemeLight").classList.toggle("active", !state.darkMode);
-  $("settingsThemeDark").classList.toggle("active", state.darkMode);
+  renderSettingsThemeGrid();
   $("settingsShellFontValue").textContent = `${state.shellFontSize} px`;
   $("settingsFontValue").textContent = `${state.fontSize} px`;
   setFontDropdownLabel("settingsShellFontModeLabel", FONT_MODE_LABELS[state.shellFontMode]);
@@ -6468,6 +7645,9 @@ function renderSettingsMenu() {
   setSegmentedValue("settingsMinimapControl", state.minimap ? "on" : "off");
   setSegmentedValue("settingsCaretAnimationControl", state.smoothCaretAnimation ? "on" : "off");
   setSegmentedValue("settingsWhitespaceControl", state.renderWhitespace);
+  setSegmentedValue("settingsAutoSaveControl", state.autoSave ? "on" : "off");
+  setSegmentedValue("settingsTabSizeControl", String(state.tabSize));
+  setSegmentedValue("settingsInsertSpacesControl", state.insertSpaces ? "on" : "off");
   setSegmentedValue("settingsKeymapProfileControl", state.keymapProfile);
   setSegmentedValue("settingsMarkdownWidthControl", state.markdownContentWidth);
   setSegmentedValue("settingsMarkdownControl", state.markdownEditMode);
@@ -6912,12 +8092,22 @@ function cycleWhitespace() {
   setWhitespace(state.renderWhitespace === "none" ? "selection" : state.renderWhitespace === "selection" ? "all" : "none");
 }
 
+
+function clampEditorFontSize(size: number) {
+  return Math.min(24, Math.max(11, Math.round(size)));
+}
+
 function setFontSize(size: number) {
-  state.fontSize = Math.min(24, Math.max(11, size));
+  state.fontSize = clampEditorFontSize(size);
   applyEditorSettings();
   renderChrome();
   renderSettingsMenu();
   scheduleSessionSave();
+}
+
+function resetEditorFontSize() {
+  setFontSize(DEFAULT_EDITOR_FONT_SIZE);
+  log(`已恢复默认字号 ${DEFAULT_EDITOR_FONT_SIZE}px`);
 }
 
 function resetEditorView() {
@@ -6925,6 +8115,9 @@ function resetEditorView() {
   state.minimap = false;
   state.smoothCaretAnimation = false;
   state.renderWhitespace = "selection";
+  state.autoSave = true;
+  state.tabSize = 2;
+  state.insertSpaces = true;
   state.fontSize = DEFAULT_EDITOR_FONT_SIZE;
   state.shellFontMode = "preset";
   state.shellFontPreset = DEFAULT_SHELL_FONT_PRESET;
@@ -7491,6 +8684,7 @@ function handleMarkdownEditorChange(documentId: number, bridge: MarkdownEditorBr
 }
 
 function replaceModelText(model: monaco.editor.ITextModel, nextText: string) {
+  if (model.isDisposed()) return;
   const currentText = model.getValue();
   if (currentText === nextText) return;
 
@@ -7773,10 +8967,12 @@ function scheduleMarkdownPreviewRender() {
 }
 
 function requestEditorLayout(forceRender = true) {
+  if (editorLayoutFrozen && !forceRender) return;
   editorLayoutForceRender ||= forceRender;
   if (editorLayoutFrame !== 0 || editorLayoutSettleFrame !== 0) return;
   editorLayoutFrame = window.requestAnimationFrame(() => {
     editorLayoutFrame = 0;
+    // force 时双 rAF，等 grid/flex 结算；普通尺寸变化单帧足够，更跟手
     if (editorLayoutForceRender) {
       editorLayoutSettleFrame = window.requestAnimationFrame(runEditorLayout);
       return;
@@ -8073,19 +9269,39 @@ function syncCurrentFindControls() {
 
 function renderCurrentFindMode() {
   const replace = state.findView === "replace";
-  $("currentReplaceInput").classList.toggle("hidden", !replace);
-  $("currentReplaceButton").classList.toggle("hidden", !replace);
-  $("currentReplaceAllButton").classList.toggle("hidden", !replace);
+  const replaceRow = document.getElementById("currentReplaceRow");
+  if (replaceRow) replaceRow.classList.toggle("hidden", !replace);
+  // 展开替换行时确保按钮图标已渲染
+  if (replace && replaceRow) renderIconSlots(replaceRow);
+  // 展开箭头方向
+  const toggleBtn = document.getElementById("currentFindToggleReplace");
+  if (toggleBtn) {
+    toggleBtn.setAttribute("data-icon-replace", replace ? "ChevronDown" : "ChevronRight");
+    toggleBtn.title = replace ? "收起替换 (Esc)" : "展开替换 (⌘R)";
+    const icon = toggleBtn.querySelector<HTMLElement>(".icon-slot");
+    if (icon) icon.dataset.icon = replace ? "ChevronDown" : "ChevronRight";
+  }
+  if (toggleBtn) renderIconSlots(toggleBtn);
 }
 
 function renderCurrentFindCount() {
-  const currentResults = state.searchScope === "current" ? state.results : null;
-  if (!currentResults || currentResults.total === 0) {
-    $("currentFindCount").textContent = "0 个结果";
+  const count = $("currentFindCount");
+  const query = ($<HTMLInputElement>("currentFindInput")).value;
+  if (!query) {
+    count.textContent = "";
+    count.classList.add("hidden");
     return;
   }
+  count.classList.remove("hidden");
+  const currentResults = state.searchScope === "current" ? state.results : null;
+  if (!currentResults || currentResults.total === 0) {
+    count.textContent = "0 个结果";
+    count.style.color = "var(--text-danger, #c0392b)";
+    return;
+  }
+  count.style.color = "";
   const active = state.activeResultIndex >= 0 ? state.activeResultIndex + 1 : 0;
-  $("currentFindCount").textContent = active > 0 ? `${active}/${currentResults.total}` : `${currentResults.total} 个结果`;
+  count.textContent = active > 0 ? `${active}/${currentResults.total}` : `${currentResults.total} 个结果`;
 }
 
 function currentSearchPatternError(query: string) {
@@ -8244,6 +9460,134 @@ function selectedEditorTextForFind() {
   return normalized.slice(0, 300);
 }
 
+/** 缩进快速切换菜单（inline，不需额外 HTML） */
+function openConvertMenu(
+  anchor: HTMLElement,
+  convertItems: { id: ToolboxItemId; title: string }[],
+  readOnly: boolean
+) {
+  // 已有就关闭（toggle）
+  const existing = document.getElementById("convertPopup");
+  if (existing) { existing.remove(); return; }
+  closeMenus();
+
+  const popup = document.createElement("div");
+  popup.id = "convertPopup";
+  popup.className = "popover menu-popover";
+  popup.setAttribute("role", "menu");
+  popup.setAttribute("aria-label", "格式转换");
+
+  const list = document.createElement("div");
+  list.className = "menu-list";
+
+  for (const item of convertItems) {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "menu-row";
+    row.setAttribute("role", "menuitem");
+    row.disabled = readOnly;
+    row.innerHTML = `<span class="icon-slot" data-icon="ArrowLeftRight"></span><strong>${escapeHtml(item.title)}</strong>`;
+    row.addEventListener("click", () => {
+      popup.remove();
+      void applyToolboxQuickItem(item.id);
+    });
+    list.appendChild(row);
+  }
+
+  popup.appendChild(list);
+  renderIconSlots(popup);
+
+  const rect = anchor.getBoundingClientRect();
+  popup.style.position = "fixed";
+  popup.style.top = `${rect.bottom + 4}px`;
+  popup.style.left = `${rect.left}px`;
+  popup.style.zIndex = "9999";
+  document.body.appendChild(popup);
+
+  // 点外关闭
+  const close = (e: MouseEvent) => {
+    if (!popup.contains(e.target as Node) && e.target !== anchor) {
+      popup.remove();
+      document.removeEventListener("mousedown", close, true);
+    }
+  };
+  document.addEventListener("mousedown", close, true);
+}
+
+function openIndentMenu() {
+  closeMenus();
+  const anchor = document.getElementById('indentButton');
+  if (!anchor) return;
+
+  const existing = document.getElementById('indentPopup');
+  existing?.remove();
+
+  const menu = document.createElement('section');
+  menu.id = 'indentPopup';
+  menu.className = 'popover menu-popover';
+  menu.setAttribute('role', 'menu');
+  menu.setAttribute('aria-label', '缩进设置');
+
+  const makeRow = (label: string, active: boolean, onClick: () => void) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'menu-row' + (active ? ' active' : '');
+    btn.setAttribute('role', 'menuitem');
+    btn.innerHTML = `<strong>${label}</strong>${active ? '<small>当前</small>' : ''}`;
+    btn.addEventListener('click', () => { onClick(); menu.remove(); renderChrome(); });
+    return btn;
+  };
+
+  const list = document.createElement('div');
+  list.className = 'menu-list';
+
+  // 空格选项
+  const spaceSizes = [2, 4, 8];
+  for (const size of spaceSizes) {
+    list.appendChild(makeRow(`空格 ${size}`, state.insertSpaces && state.tabSize === size, () => {
+      state.insertSpaces = true;
+      state.tabSize = size;
+      editor.updateOptions({ tabSize: size, insertSpaces: true });
+      scheduleSessionSave();
+    }));
+  }
+
+  const divider = document.createElement('div');
+  divider.className = 'menu-divider';
+  list.appendChild(divider);
+
+  // Tab 选项
+  for (const size of spaceSizes) {
+    list.appendChild(makeRow(`Tab 大小 ${size}`, !state.insertSpaces && state.tabSize === size, () => {
+      state.insertSpaces = false;
+      state.tabSize = size;
+      editor.updateOptions({ tabSize: size, insertSpaces: false });
+      scheduleSessionSave();
+    }));
+  }
+
+  menu.appendChild(list);
+  document.body.appendChild(menu);
+
+  // 定位到按钮上方
+  const rect = anchor.getBoundingClientRect();
+  menu.style.position = 'fixed';
+  menu.style.zIndex = '9999';
+  const menuH = 200;
+  const menuW = 160;
+  menu.style.left = `${Math.max(4, Math.min(rect.left, window.innerWidth - menuW - 4))}px`;
+  menu.style.bottom = `${window.innerHeight - rect.top + 4}px`;
+  menu.style.width = `${menuW}px`;
+  menu.classList.remove('hidden');
+
+  const close = (e: MouseEvent) => {
+    if (!menu.contains(e.target as Node)) { menu.remove(); document.removeEventListener('mousedown', close, true); }
+  };
+  document.addEventListener('mousedown', close, true);
+  (list.querySelector('.menu-row.active') as HTMLButtonElement | null)?.focus()
+    ?? (list.querySelector('.menu-row') as HTMLButtonElement | null)?.focus();
+}
+
 function toggleMenu(id: "languageMenu" | "encodingMenu" | "lineEndingMenu" | "recentMenu" | "batchEditMenu") {
   const menu = $(id);
   const open = menu.classList.contains("hidden");
@@ -8321,19 +9665,24 @@ function activeAppMenu() {
 }
 
 function closeMenus() {
+  hideChromeTip();
   closeTabOverflowMenu();
+  closeToolbarOverflowMenu();
   document.querySelectorAll(".tab.context-open").forEach((tab) => tab.classList.remove("context-open"));
-  $("languageMenu").classList.add("hidden");
-  $("encodingMenu").classList.add("hidden");
-  $("lineEndingMenu").classList.add("hidden");
-  $("recentMenu").classList.add("hidden");
-  $("batchEditMenu").classList.add("hidden");
-  $("compareOpenTabMenu").classList.add("hidden");
-  $("tabMenu").classList.add("hidden");
-  $("treeMenu").classList.add("hidden");
-  $("markdownContextMenu").classList.add("hidden");
-  $("markdownImageContextMenu").classList.add("hidden");
-  $("markdownTableContextMenu").classList.add("hidden");
+  $('languageMenu').classList.add('hidden');
+  $('encodingMenu').classList.add('hidden');
+  $('lineEndingMenu').classList.add('hidden');
+  $('recentMenu').classList.add('hidden');
+  $('batchEditMenu').classList.add('hidden');
+  $('compareOpenTabMenu').classList.add('hidden');
+  $('tabMenu').classList.add('hidden');
+  $('treeMenu').classList.add('hidden');
+  $('markdownContextMenu').classList.add('hidden');
+  $('markdownImageContextMenu').classList.add('hidden');
+  $('markdownTableContextMenu').classList.add('hidden');
+  document.getElementById('editorContextMenu')?.classList.add('hidden');
+  document.getElementById('indentPopup')?.remove(); // 内联缩进菜单
+  document.getElementById('convertPopup')?.remove(); // 转换菜单
   closeMarkdownSubmenus();
   $("fileMenu").classList.add("hidden");
   $("editMenu").classList.add("hidden");
@@ -8342,8 +9691,9 @@ function closeMenus() {
   document.querySelectorAll<HTMLButtonElement>(".app-menu-trigger").forEach((trigger) => {
     trigger.setAttribute("aria-expanded", "false");
   });
-  ["languageButton", "encodingButton", "lineEndingButton", "recentButton", "batchEditButton", "compareOpenTabButton"].forEach((id) => {
-    $<HTMLButtonElement>(id).setAttribute("aria-expanded", "false");
+  ["languageButton", "encodingButton", "lineEndingButton", "recentButton", "batchEditButton", "compareOpenTabButton", "toolbarOverflowButton"].forEach((id) => {
+    const button = document.getElementById(id) as HTMLButtonElement | null;
+    button?.setAttribute("aria-expanded", "false");
   });
 }
 
@@ -8392,15 +9742,30 @@ function openQuickOpen() {
 
 function openCurrentFind(view: "find" | "replace") {
   if (diffSession) closeDiffSession();
+  const alreadyOpen = !$("currentFindDock").classList.contains("hidden");
+  const alreadySameView = state.findView === view;
   setFindView(view);
+  // 已经打开且是同一模式：加载当前选区到查找框而不是关闭
+  if (alreadyOpen && alreadySameView && view === "find") {
+    toggleFindOpen({ prefillFromSelection: true });
+    return;
+  }
   toggleFindOpen({ prefillFromSelection: true });
+  // 替换模式：自动跳到替换框（查找框已有内容时）
+  if (view === "replace") {
+    const findVal = ($<HTMLInputElement>("currentFindInput")).value;
+    window.requestAnimationFrame(() => {
+      const replaceInput = $<HTMLInputElement>("currentReplaceInput");
+      if (findVal) replaceInput.focus();
+    });
+  }
 }
 
 function ensureDiffEditor() {
   if (diffEditor) return diffEditor;
   diffEditor = monaco.editor.createDiffEditor($("diffEditor"), {
     automaticLayout: false,
-    theme: state.darkMode ? "notra-dark" : "notra-light",
+    theme: getAppTheme().monaco,
     fontFamily: resolveEditorFontStack(),
     fontSize: state.fontSize,
     lineHeight: editorLineHeight(),
@@ -8440,7 +9805,7 @@ function setDiffSurfaceOpen(open: boolean) {
   } else if (!isMarkdownWysiwygActive()) {
     $("editor").classList.remove("hidden");
   }
-  requestEditorLayout();
+  requestEditorLayout(true);
 }
 
 function openDiffSession(options: {
@@ -8493,11 +9858,30 @@ function openDiffSession(options: {
   setDiffSurfaceOpen(true);
   renderDiffToolbar();
   refreshDiffChangeCount();
+  const layoutDiff = () => {
+    if (!diffEditor || !diffSession) return;
+    const container = $("diffEditor");
+    const rect = container.getBoundingClientRect();
+    const width = Math.max(0, Math.floor(rect.width));
+    const height = Math.max(0, Math.floor(rect.height));
+    if (width > 0 && height > 0) {
+      diffEditor.layout({ width, height });
+    } else {
+      diffEditor.layout();
+      window.requestAnimationFrame(() => {
+        if (!diffEditor || !diffSession) return;
+        const retry = $("diffEditor").getBoundingClientRect();
+        const w = Math.floor(retry.width);
+        const h = Math.floor(retry.height);
+        if (w > 0 && h > 0) diffEditor.layout({ width: w, height: h });
+      });
+    }
+  };
   window.requestAnimationFrame(() => {
-    instance.layout();
+    layoutDiff();
     instance.focus();
-    // Jump to first change when available.
     window.setTimeout(() => {
+      layoutDiff();
       if ((diffSession?.changeCount ?? 0) > 0) navigateDiffChange("next", false);
     }, 30);
   });
@@ -8891,7 +10275,8 @@ function applyFindSnippet(snippet: string, regex: boolean) {
   syncCurrentFindControls();
   scheduleCurrentFind();
   input.focus();
-  input.select();
+  // 光标放到末尾，不全选（方便继续编辑模式）
+  input.setSelectionRange(value.length, value.length);
 }
 
 async function runQuickStartAction(action: string) {
@@ -8939,6 +10324,111 @@ async function compareActiveWithDisk() {
     modifiedModel: doc.model,
     modifiedReadOnly: doc.readOnly,
   });
+}
+
+
+function isTextDiffDialogOpen() {
+  return !document.getElementById("textDiffDialog")?.classList.contains("hidden");
+}
+
+function getEditorSeedText() {
+  const doc = activeDocument();
+  if (isMarkdownWysiwygActive(doc)) syncMarkdownModelFromEditor(doc);
+  const selection = editor?.getSelection();
+  if (selection && !selection.isEmpty()) {
+    return doc.model.getValueInRange(selection);
+  }
+  return doc.model.getValue();
+}
+
+function openTextDiffDialog(options: { seedSelection?: boolean } = {}) {
+  closeMenus();
+  closeToolboxPage();
+  const left = $("textDiffLeftInput") as HTMLTextAreaElement;
+  const right = $("textDiffRightInput") as HTMLTextAreaElement;
+  if (options.seedSelection !== false) {
+    const seed = getEditorSeedText();
+    // 若左侧空，优先填当前内容，方便「当前 vs 粘贴」
+    if (!left.value.trim() && seed.trim()) left.value = seed;
+  }
+  $("textDiffDialog").classList.remove("hidden");
+  renderIconSlots($("textDiffDialog"));
+  // 焦点落到仍为空的一侧
+  window.requestAnimationFrame(() => {
+    if (!left.value.trim()) left.focus();
+    else if (!right.value.trim()) right.focus();
+    else left.focus();
+  });
+}
+
+function closeTextDiffDialog() {
+  document.getElementById("textDiffDialog")?.classList.add("hidden");
+}
+
+function fillTextDiffPane(side: "left" | "right") {
+  const text = getEditorSeedText();
+  const el = $(side === "left" ? "textDiffLeftInput" : "textDiffRightInput") as HTMLTextAreaElement;
+  el.value = text;
+  el.focus();
+}
+
+async function pasteIntoTextDiffPane(side: "left" | "right") {
+  const el = $(side === "left" ? "textDiffLeftInput" : "textDiffRightInput") as HTMLTextAreaElement;
+  try {
+    const text = await navigator.clipboard.readText();
+    el.value = text;
+    el.focus();
+  } catch {
+    notify("无法读取剪贴板，请直接 Ctrl+V 粘贴", "info");
+    el.focus();
+  }
+}
+
+function swapTextDiffDialogSides() {
+  const left = $("textDiffLeftInput") as HTMLTextAreaElement;
+  const right = $("textDiffRightInput") as HTMLTextAreaElement;
+  const tmp = left.value;
+  left.value = right.value;
+  right.value = tmp;
+}
+
+function sniffLanguageForDiff(left: string, right: string): string {
+  const sample = (left.trim() || right.trim()).slice(0, 4000);
+  return sniffContentLanguage(sample) || activeDocument().language || "plaintext";
+}
+
+function startTextDiffFromDialog() {
+  let left = ($("textDiffLeftInput") as HTMLTextAreaElement).value;
+  let right = ($("textDiffRightInput") as HTMLTextAreaElement).value;
+  if (!left.trim() && !right.trim()) {
+    notify("请至少在一侧粘贴文本", "info");
+    return;
+  }
+  const ignoreWs = Boolean((document.getElementById("textDiffIgnoreWs") as HTMLInputElement | null)?.checked);
+  if (ignoreWs) {
+    left = left.replace(/[ \t]+$/gm, "").replace(/[ \t]+/g, " ");
+    right = right.replace(/[ \t]+$/gm, "").replace(/[ \t]+/g, " ");
+  }
+  if (left === right) {
+    notify(ignoreWs ? "忽略空白后两侧文本相同" : "两侧文本完全相同", "info");
+  }
+  closeTextDiffDialog();
+  openDiffSession({
+    leftLabel: ignoreWs ? "文本 A（忽略空白）" : "文本 A",
+    rightLabel: ignoreWs ? "文本 B（忽略空白）" : "文本 B",
+    originalText: left,
+    modifiedText: right,
+    language: sniffLanguageForDiff(left, right),
+    originalReadOnly: false,
+    modifiedReadOnly: false,
+  });
+  // 尽量打开忽略空白选项
+  try {
+    if (ignoreWs && diffEditor) {
+      diffEditor.updateOptions({ ignoreTrimWhitespace: true });
+    }
+  } catch { /* ignore */ }
+  notify("已打开文本对比（两侧可编辑，关闭不写回文件）", "success");
 }
 
 async function compareTwoFiles(preferredLeftPath?: string) {
@@ -9144,6 +10634,86 @@ function deleteEmptyLines() {
   log(`已删除 ${edits.length} 个空行`);
 }
 
+async function clipboardWrite(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.cssText = "position:fixed;opacity:0;pointer-events:none";
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand("copy");
+    ta.remove();
+    return ok;
+  }
+}
+
+async function clipboardRead(): Promise<string | null> {
+  try {
+    return await navigator.clipboard.readText();
+  } catch {
+    return null;
+  }
+}
+
+async function copyEditorSelection() {
+  const model = editor.getModel();
+  const selection = editor.getSelection();
+  if (!model || !selection || selection.isEmpty()) {
+    log("请先选择要复制的内容");
+    return;
+  }
+  const text = model.getValueInRange(selection);
+  const ok = await clipboardWrite(text);
+  log(ok ? "已复制" : "复制失败：系统剪贴板不可用");
+}
+
+async function cutEditorSelection() {
+  const model = editor.getModel();
+  const selection = editor.getSelection();
+  const doc = activeDocument();
+  const docId = doc.id;
+  if (!model || !selection || selection.isEmpty()) {
+    log("请先选择要剪切的内容");
+    return;
+  }
+  if (doc.readOnly) { log("只读文档无法剪切"); return; }
+  const text = model.getValueInRange(selection);
+  const ok = await clipboardWrite(text);
+  if (activeDocument().id !== docId) { log("剪切未写回：操作期间已切换标签"); return; }
+  if (!ok) { log("剪贴板不可用，已取消剪切"); return; }
+  if (model.isDisposed()) return;
+  editor.focus();
+  editor.executeEdits("cut", [{ range: selection, text: "", forceMoveMarkers: true }]);
+  log("已剪切");
+  scheduleAutoSave(doc);
+}
+
+async function pasteEditorSelection() {
+  const doc = activeDocument();
+  const docId = doc.id;
+  if (doc.readOnly) { log("只读文档无法粘贴"); return; }
+  const text = await clipboardRead();
+  if (activeDocument().id !== docId) { log("粘贴未写回：操作期间已切换标签"); return; }
+  if (text === null) {
+    // 剪贴板无权限时退回 Monaco trigger（focusAttempt first）
+    editor.focus();
+    editor.trigger("keyboard", "editor.action.clipboardPasteAction", null);
+    window.setTimeout(() => void maybeDetectLanguageAfterEdit("paste"), 0);
+    return;
+  }
+  if (doc.model.isDisposed()) return;
+  const selections = editor.getSelections() ?? [editor.getSelection()!];
+  editor.focus();
+  editor.executeEdits("paste", selections.map((range) => ({ range, text, forceMoveMarkers: true })));
+  window.setTimeout(() => void maybeDetectLanguageAfterEdit("paste"), 0);
+  log("已粘贴");
+  scheduleAutoSave(doc);
+}
+
 function runEditorAction(actionId: string, successMessage?: string) {
   if (isMarkdownWysiwygActive() && markdownEditor) {
     if (actionId === "editor.action.selectAll") {
@@ -9178,6 +10748,664 @@ function isMinifyActionSupported(doc = activeDocument()) {
   return doc.language === "json" || doc.language === "xml" || doc.language === "html";
 }
 
+
+function sniffContentLanguage(text: string): string | null {
+  const sample = text.trim();
+  if (!sample) return null;
+  if (
+    (sample.startsWith("{") && sample.includes("}"))
+    || (sample.startsWith("[") && sample.includes("]"))
+  ) {
+    try {
+      JSON.parse(sample);
+      return "json";
+    } catch {
+      // keep trying other detectors
+    }
+  }
+  if (sample.startsWith("<") && sample.includes(">")) {
+    if (/^<!DOCTYPE\s+html/i.test(sample) || /^<html[\s>]/i.test(sample) || /<\/html>\s*$/i.test(sample)) {
+      return "html";
+    }
+    return "xml";
+  }
+  if (/^\s*(WITH|SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE|MERGE|EXPLAIN|CALL|BEGIN|DECLARE)\b/i.test(sample)) {
+    return "sql";
+  }
+  return null;
+}
+
+function isSyntaxValidationSupported(doc = activeDocument()) {
+  const language = doc.language || "plaintext";
+  if (language === "json" || language === "sql" || language === "xml" || language === "html") return true;
+  // plaintext：内容可被嗅探时也可校验
+  return Boolean(sniffContentLanguage(doc.model.getValue()));
+}
+
+async function validateSyntaxText(language: string, source: string): Promise<{ ok: true; message: string } | { ok: false; error: string }> {
+  const text = source ?? "";
+  if (!text.trim()) return { ok: false, error: "内容为空，无法校验" };
+
+  if (language === "json") {
+    try {
+      const parsed = JSON.parse(text);
+      const type = Array.isArray(parsed) ? "array" : parsed === null ? "null" : typeof parsed;
+      return { ok: true, message: `JSON 语法合法 · 根类型 ${type}` };
+    } catch (error) {
+      return { ok: false, error: `JSON 语法错误：${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
+
+  if (language === "sql") {
+    try {
+      await formatSqlInWorker(text, 2, false);
+      return { ok: true, message: "SQL 语法可解析（基于格式化引擎校验）" };
+    } catch (error) {
+      return { ok: false, error: `SQL 语法错误：${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
+
+  if (language === "xml" || language === "html") {
+    try {
+      if (typeof DOMParser === "undefined") {
+        return validateMarkupBalance(text, language);
+      }
+      const mime = language === "html" ? "text/html" : "application/xml";
+      const doc = new DOMParser().parseFromString(text, mime);
+      if (language === "xml") {
+        const err = doc.getElementsByTagName("parsererror")[0];
+        if (err) {
+          const msg = (err.textContent || "XML 解析失败").replace(/\s+/g, " ").trim();
+          return { ok: false, error: `XML 语法错误：${msg.slice(0, 240)}` };
+        }
+        return { ok: true, message: "XML 语法合法" };
+      }
+      // HTML 解析器很宽松；再补标签栈检查
+      const balance = validateMarkupBalance(text, "html");
+      if (!balance.ok) return balance;
+      return { ok: true, message: "HTML 结构检查通过（浏览器解析器较宽松）" };
+    } catch (error) {
+      return { ok: false, error: `${language.toUpperCase()} 校验失败：${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
+
+  return { ok: false, error: `当前语言「${languageLabel(language)}」暂不支持语法校验` };
+}
+
+function validateMarkupBalance(source: string, mode: "xml" | "html"): { ok: true; message: string } | { ok: false; error: string } {
+  const voidTags = new Set([
+    "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr",
+  ]);
+  const stack: string[] = [];
+  const re = /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<!DOCTYPE[\s\S]*?>|<\?[\s\S]*?\?>|<\/([A-Za-z_:][\w:.-]*)\s*>|<([A-Za-z_:][\w:.-]*)\b[^>]*>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(source))) {
+    const full = match[0];
+    if (full.startsWith("<!--") || full.startsWith("<![") || full.startsWith("<!DOCTYPE") || full.startsWith("<?")) continue;
+    if (full.startsWith("</")) {
+      const name = (match[1] || "").toLowerCase();
+      const top = stack.pop();
+      if (!top) return { ok: false, error: `${mode.toUpperCase()} 语法错误：多余的结束标签 </${name}>` };
+      if (top !== name) return { ok: false, error: `${mode.toUpperCase()} 语法错误：标签不匹配，期望 </${top}>，实际 </${name}>` };
+      continue;
+    }
+    const name = (match[2] || "").toLowerCase();
+    if (!name) continue;
+    if (mode === "html" && voidTags.has(name)) continue;
+    if (/\/>\s*$/.test(full)) continue;
+    stack.push(name);
+  }
+  if (stack.length) {
+    return { ok: false, error: `${mode.toUpperCase()} 语法错误：未闭合标签 <${stack[stack.length - 1]}>` };
+  }
+  return { ok: true, message: `${mode.toUpperCase()} 标签配对检查通过` };
+}
+
+async function validateActiveSyntax() {
+  const doc = activeDocument();
+  const target = getToolboxTargetRange();
+  let language = doc.language || "plaintext";
+  if (language === "plaintext" || language === "txt") {
+    const sniffed = sniffContentLanguage(target.source);
+    if (sniffed) language = sniffed;
+  }
+  if (language === "plaintext" || language === "txt") {
+    notify("语法校验：请先把语言设为 JSON / SQL / XML / HTML，或粘贴可识别内容", "info");
+    return;
+  }
+  const scope = target.fullDocument ? "全文" : "选区";
+  try {
+    const result = await validateSyntaxText(language, target.source);
+    if (result.ok) {
+      notify(`✓ 语法校验通过（${languageLabel(language)} · ${scope}）：${result.message}`, "success");
+    } else {
+      notify(`✗ 语法校验失败（${languageLabel(language)} · ${scope}）：${result.error}`, "error");
+    }
+  } catch (error) {
+    notify(`语法校验异常：${error instanceof Error ? error.message : String(error)}`, "error");
+  }
+}
+
+function applyDetectedLanguage(language: string, reason: string) {
+  const doc = activeDocument();
+  if (!language || doc.language === language) return false;
+  setLanguage(language);
+  log(`${reason}：已切换语言为 ${languageLabel(language)}`);
+  return true;
+}
+
+async function maybeDetectLanguageAfterEdit(reason: "paste" | "manual") {
+  const doc = activeDocument();
+  if (doc.readOnly || isMarkdownWysiwygActive(doc)) return;
+  // 仅空白/纯文本新文档自动识别，避免覆盖用户手动语言
+  const isPlain = !doc.language || doc.language === "plaintext" || doc.language === "txt";
+  const text = doc.model.getValue();
+  if (!text.trim()) return;
+  // 已有路径的大文件不自动改语言
+  if (doc.path && text.length > 200_000) return;
+
+  if (isPlain) {
+    const sniffed = sniffContentLanguage(text);
+    if (sniffed) {
+      const ok = applyDetectedLanguage(sniffed, reason === "paste" ? "粘贴内容已识别" : "内容识别");
+      if (ok) notify(`${reason === "paste" ? "粘贴内容已识别" : "内容识别"}：${languageLabel(sniffed)}`, "success");
+      else if (reason === "manual") notify(`当前已是 ${languageLabel(sniffed)}`, "info");
+    } else if (reason === "manual") {
+      notify("未能从内容识别语言（支持 JSON / SQL / XML / HTML）", "info");
+    }
+  } else if (reason === "manual") {
+    // 已有语言的文档手动识别：尝试更换
+    const sniffed = sniffContentLanguage(text);
+    if (sniffed && sniffed !== doc.language) {
+      const ok = applyDetectedLanguage(sniffed, "识别语言");
+      if (ok) notify(`已更改语言：${languageLabel(sniffed)}`, "success");
+    } else if (sniffed) {
+      notify(`当前已是 ${languageLabel(sniffed)}`, "info");
+    } else {
+      notify(`未识别到明确语言，当前: ${languageLabel(doc.language)}`, "info");
+    }
+  }
+
+  // 工具智能推荐（粘贴时；手动识别也可）
+  if (reason === "paste" || reason === "manual") {
+    maybeRecommendToolbox(text, reason);
+  }
+}
+
+function maybeRecommendToolbox(text: string, reason: "paste" | "manual") {
+  const sample = text.length > 20_000 ? text.slice(0, 20_000) : text;
+  const hints = detectToolboxHints(sample);
+  if (!hints.length) {
+    if (reason === "manual") notify("未识别到可推荐的工具", "info");
+    return;
+  }
+  const primary = hints[0]!;
+  const item = getToolboxItem(primary.toolId);
+  if (item) {
+    toolboxCategory = item.category;
+    toolboxSelectedId = item.id;
+    toolboxRememberChoice = true;
+  }
+  const rest = hints.slice(1).map((h) => h.label).join(" · ");
+  const suffix = rest ? `；还可：${rest}` : "";
+  const message = `${reason === "paste" ? "粘贴" : "内容"}推荐：${primary.label}${suffix}`;
+  notify(message, primary.confidence === "high" ? "success" : "info", {
+    actionLabel: "应用",
+    onAction: () => {
+      void applyToolboxQuickItem(primary.toolId);
+    },
+  });
+  scheduleToolbarQuickTools();
+}
+
+function bindEditorContextMenu() {
+  const host = document.getElementById("editor")?.parentElement;
+  host?.addEventListener("contextmenu", (event) => {
+    if (isMarkdownWysiwygActive()) return;
+    const pointerEvent = event as MouseEvent;
+    const target = pointerEvent.target instanceof Element ? pointerEvent.target : null;
+    if (!target || !host.contains(target)) return;
+    if (target.closest("input, textarea, select, .diff-host")) return;
+    pointerEvent.preventDefault();
+    pointerEvent.stopPropagation();
+    openEditorContextMenu(pointerEvent);
+  });
+
+  document.getElementById("editorContextMenu")?.querySelectorAll<HTMLButtonElement>("[data-editor-ctx]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const action = button.dataset.editorCtx;
+      if (!action) return;
+      closeMenus();
+      void runEditorContextAction(action);
+    });
+  });
+}
+
+function openEditorContextMenu(event: MouseEvent) {
+  closeMenus();
+  closeFontDropdowns();
+  const doc = activeDocument();
+  const menu = $("editorContextMenu");
+  const hasSelection = Boolean(editor.getSelection() && !editor.getSelection()!.isEmpty());
+  const readOnly = doc.readOnly || editorBusyDepth > 0;
+  populateEditorSmartTools(doc, readOnly);
+  menu.querySelectorAll<HTMLButtonElement>("[data-editor-ctx]").forEach((button) => {
+    const action = button.dataset.editorCtx || "";
+    let disabled = false;
+    if (readOnly && ["cut", "paste", "format", "minify", "upper", "lower"].includes(action)) disabled = true;
+    if (readOnly && action.startsWith("tool:")) disabled = true;
+    if (action === "minify") disabled = disabled || !isMinifyActionSupported(doc);
+    if (action === "format") disabled = disabled || !isFormattingActionSupported(doc);
+    if (action === "validate") disabled = disabled || (!isSyntaxValidationSupported(doc) && doc.language !== "plaintext");
+    if (action === "cut" || action === "copy") disabled = disabled || !hasSelection;
+    if (action === "compare-disk") disabled = !doc.path;
+    button.disabled = disabled;
+  });
+  renderIconSlots(menu);
+  showContextMenu(menu, event, 280, 480);
+}
+
+/** 右键/顶栏共用：按语言 + 内容提示挑高频工具（不是全塞进工具箱才有） */
+function collectSurfaceTools(doc = activeDocument()): { id: ToolboxItemId; title: string; icon: string; tag?: string }[] {
+  const source = (() => {
+    try {
+      return getToolboxTargetRange().source;
+    } catch {
+      return doc.model.getValue();
+    }
+  })().slice(0, 20_000);
+  const language = doc.language || "plaintext";
+  const picked: { id: ToolboxItemId; title: string; icon: string; tag?: string }[] = [];
+  const seen = new Set<string>();
+  const push = (id: ToolboxItemId, icon: string, tag?: string) => {
+    if (seen.has(id)) return;
+    const item = getToolboxItem(id);
+    if (!item) return;
+    seen.add(id);
+    picked.push({ id, title: item.title, icon, tag });
+  };
+
+  // 内容嗅探优先
+  for (const hint of detectToolboxHints(source)) {
+    const icon =
+      hint.toolId === "jwt-decode" ? "Binary"
+      : hint.toolId === "timestamp-convert" ? "History"
+      : hint.toolId === "yaml-to-json" || hint.toolId === "toml-to-json" ? "FileCode2"
+      : hint.toolId === "query-to-json" ? "Link2"
+      : hint.toolId === "json-repair" || hint.toolId === "json-pretty" ? "Braces"
+      : hint.toolId === "cron-parse" ? "History"
+      : "Wrench";
+    push(hint.toolId, icon, "识别");
+  }
+
+  // 语言默认（不与顶栏格式化/JSON修复重复）
+  if (language === "json") {
+    // 修复由顶栏 JSON修复 负责；智能区给进阶
+    if (!seen.has("json-repair")) {
+      /* 顶栏已有修复时仍可在智能区给 sort/ts，但不重复 repair 除非嗅探到 */
+    }
+    push("json-sort-keys", "ListOrdered", "JSON");
+    push("json-to-ts", "FileCode2", "JSON");
+  } else if (language === "yaml" || language === "yml") {
+    push("yaml-to-json", "FileCode2", "YAML");
+  } else if (language === "toml") {
+    push("toml-to-json", "FileCode2", "TOML");
+  }
+
+  // 不再硬塞 hash/uuid 等无关项；有识别/语言信号才显示
+  return picked.slice(0, 4);
+}
+
+function populateEditorSmartTools(doc = activeDocument(), readOnly = false) {
+  const host = document.getElementById("editorCtxSmartTools");
+  if (!host) return;
+  host.innerHTML = "";
+  const tools = collectSurfaceTools(doc);
+  const divider = document.getElementById("editorCtxSmartDivider");
+  divider?.classList.toggle("hidden", tools.length === 0);
+  host.classList.toggle("hidden", tools.length === 0);
+  for (const tool of tools) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "menu-row";
+    button.setAttribute("role", "menuitem");
+    button.dataset.editorCtx = `tool:${tool.id}`;
+    button.disabled = readOnly && !getToolboxItem(tool.id)?.generator;
+    button.innerHTML = `<span class="icon-slot" data-icon="${tool.icon}"></span><strong>${escapeHtml(tool.title)}</strong><small class="smart-tag">${escapeHtml(tool.tag || "")}</small>`;
+    button.addEventListener("click", () => {
+      closeMenus();
+      void runEditorContextAction(`tool:${tool.id}`);
+    });
+    host.appendChild(button);
+  }
+}
+
+let toolbarQuickToolsTimer = 0;
+let toolbarQuickToolsSig = "";
+function scheduleToolbarQuickTools() {
+  window.clearTimeout(toolbarQuickToolsTimer);
+  toolbarQuickToolsTimer = window.setTimeout(() => renderToolbarQuickTools(), 0);
+}
+
+function renderToolbarQuickTools() {
+  const host = document.getElementById("toolboxQuickGroup");
+  if (!host) return;
+  const doc = activeDocument();
+  const smartIds = collectSurfaceTools(doc).map((t) => t.id).join(",");
+  const sig = `${doc.id}|${doc.language}|${doc.readOnly}|${smartIds}`;
+  if (sig === toolbarQuickToolsSig && host.childElementCount > 0) {
+    host.querySelectorAll<HTMLButtonElement>("[data-toolbox-quick]").forEach((button) => {
+      const id = button.dataset.toolboxQuick || "";
+      const item = getToolboxItem(id);
+      button.disabled = doc.readOnly && !item?.generator;
+    });
+    scheduleToolbarOverflowLayout();
+    return;
+  }
+  toolbarQuickToolsSig = sig;
+  const fixed: { id: ToolboxItemId; icon: string; label: string; title: string }[] = [
+    { id: "recipe-clean-paste", icon: "RefreshCw", label: "清理粘贴", title: "清理粘贴：去 BOM/LF/行尾空白/压缩空行" },
+  ];
+  for (const favId of state.toolboxFavorites.slice(0, 3)) {
+    const fav = getToolboxItem(favId);
+    if (!fav || !isToolboxCatalogItem(fav.id) || fixed.some((f) => f.id === fav.id)) continue;
+    fixed.push({
+      id: fav.id,
+      icon: "Star",
+      label: fav.title.length > 6 ? fav.title.slice(0, 6) : fav.title,
+      title: `收藏：${fav.title}`,
+    });
+  }
+  const smart = collectSurfaceTools(doc)
+    .filter((t) => !fixed.some((f) => f.id === t.id))
+    .slice(0, 2)
+    .map((t) => ({
+      id: t.id,
+      icon: t.icon,
+      label: t.title.length > 6 ? t.title.slice(0, 6) : t.title,
+      title: `${t.title}${t.tag ? `（${t.tag}）` : ""}`,
+    }));
+  const items = [...fixed, ...smart];
+  host.innerHTML = "";
+
+  // 转换按钮：固定包含所有转换工具，不依赖 smart 推荐
+  const ALL_CONVERT_ITEMS: { id: ToolboxItemId; title: string }[] = [
+    { id: "yaml-to-json",  title: "YAML → JSON" },
+    { id: "json-to-yaml",  title: "JSON → YAML" },
+    { id: "toml-to-json",  title: "TOML → JSON" },
+    { id: "json-to-toml",  title: "JSON → TOML" },
+    { id: "query-to-json", title: "Query → JSON" },
+    { id: "json-to-query", title: "JSON → Query" },
+    { id: "json-to-ts",    title: "JSON → TypeScript" },
+  ];
+  // 非转换的 smart 按钮正常渲染
+  const CONVERT_IDS = new Set(ALL_CONVERT_ITEMS.map((i) => i.id));
+  const nonConvertItems = items.filter((it) => !CONVERT_IDS.has(it.id));
+
+  for (const item of nonConvertItems) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "tool-button";
+    button.dataset.toolboxQuick = item.id;
+    button.setAttribute("aria-label", item.title);
+    button.title = item.title;
+    const meta = getToolboxItem(item.id);
+    button.disabled = doc.readOnly && !meta?.generator;
+    button.innerHTML = `<span class="icon-slot" data-icon="${item.icon}"></span><span data-label>${escapeHtml(item.label)}</span>`;
+    host.appendChild(button);
+  }
+
+  // 转换按钮：始终显示
+  const convertBtn = document.createElement("button");
+  convertBtn.type = "button";
+  convertBtn.className = "tool-button";
+  convertBtn.id = "toolbarConvertButton";
+  convertBtn.setAttribute("aria-label", "格式转换");
+  convertBtn.title = "格式转换";
+  convertBtn.disabled = doc.readOnly;
+  convertBtn.innerHTML = `<span class="icon-slot" data-icon="ArrowLeftRight"></span><span data-label>转换</span>`;
+  convertBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    openConvertMenu(convertBtn, ALL_CONVERT_ITEMS, doc.readOnly);
+  });
+  host.appendChild(convertBtn);
+  renderIconSlots(host);
+  preferFastToolbarTips(host);
+  scheduleToolbarOverflowLayout();
+  updateToolbarScopeBadge();
+}
+
+/** 工具栏溢出：窄窗口时把低频按钮收进「更多」 */
+let toolbarOverflowTimer = 0;
+let toolbarOverflowObserver: ResizeObserver | null = null;
+
+function scheduleToolbarOverflowLayout() {
+  window.clearTimeout(toolbarOverflowTimer);
+  toolbarOverflowTimer = window.setTimeout(() => layoutToolbarOverflow(), 16);
+}
+
+function bindToolbarOverflow() {
+  const group = document.getElementById("toolbarPrimaryActions");
+  const button = document.getElementById("toolbarOverflowButton");
+  if (!group || !button) return;
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleToolbarOverflowMenu();
+  });
+  toolbarOverflowObserver?.disconnect();
+  toolbarOverflowObserver = new ResizeObserver(() => scheduleToolbarOverflowLayout());
+  toolbarOverflowObserver.observe(group);
+  const toolbar = group.closest(".toolbar");
+  if (toolbar instanceof HTMLElement) toolbarOverflowObserver.observe(toolbar);
+  window.addEventListener("resize", scheduleToolbarOverflowLayout);
+  scheduleToolbarOverflowLayout();
+}
+
+function toolbarFits(group: HTMLElement) {
+  return group.scrollWidth <= group.clientWidth + 1;
+}
+
+function isToolbarCandidateVisible(el: HTMLElement) {
+  if (el.id === "toolbarOverflowButton") return false;
+  if (el.classList.contains("hidden")) return false;
+  return true;
+}
+
+function layoutToolbarOverflow() {
+  // 溢出收纳暂时关闭，避免误藏工具栏按钮
+  const group = document.getElementById("toolbarPrimaryActions");
+  const overflowButton = document.getElementById("toolbarOverflowButton") as HTMLButtonElement | null;
+  if (!group || !overflowButton) return;
+  group.querySelectorAll<HTMLElement>(".toolbar-overflowed").forEach((el) => {
+    el.classList.remove("toolbar-overflowed");
+  });
+  overflowButton.classList.add("hidden");
+  overflowButton.setAttribute("aria-expanded", "false");
+  document.getElementById("toolbarOverflowMenu")?.classList.add("hidden");
+}
+
+function syncToolbarDividers(group: HTMLElement) {
+  const children = Array.from(group.children) as HTMLElement[];
+  for (const child of children) {
+    if (!child.hasAttribute("data-toolbar-divider")) continue;
+    const index = children.indexOf(child);
+    const prevVisible = children.slice(0, index).reverse().find((el) => toolbarNodeCounts(el));
+    const nextVisible = children.slice(index + 1).find((el) => toolbarNodeCounts(el) && el.id !== "toolbarOverflowButton");
+    const hide = !prevVisible || !nextVisible;
+    child.classList.toggle("toolbar-overflowed", hide);
+  }
+}
+
+function toolbarNodeCounts(el: HTMLElement) {
+  if (el.classList.contains("hidden") || el.classList.contains("toolbar-overflowed")) return false;
+  if (el.hasAttribute("data-toolbar-divider")) return false;
+  if (el.id === "toolbarOverflowButton") return false;
+  if (el.id === "toolboxQuickGroup" && el.childElementCount === 0) return false;
+  return true;
+}
+
+function toggleToolbarOverflowMenu() {
+  const menu = document.getElementById("toolbarOverflowMenu");
+  if (!menu) return;
+  if (menu.classList.contains("hidden")) openToolbarOverflowMenu();
+  else closeToolbarOverflowMenu();
+}
+
+function closeToolbarOverflowMenu() {
+  const menu = document.getElementById("toolbarOverflowMenu");
+  const button = document.getElementById("toolbarOverflowButton");
+  menu?.classList.add("hidden");
+  button?.setAttribute("aria-expanded", "false");
+}
+
+function openToolbarOverflowMenu() {
+  closeMenus();
+  closeFontDropdowns();
+  renderToolbarOverflowMenu();
+  const menu = document.getElementById("toolbarOverflowMenu");
+  const button = document.getElementById("toolbarOverflowButton") as HTMLButtonElement | null;
+  if (!menu || !button || button.classList.contains("hidden")) return;
+  menu.classList.remove("hidden");
+  button.setAttribute("aria-expanded", "true");
+  const rect = button.getBoundingClientRect();
+  const width = menu.offsetWidth || 240;
+  const height = menu.offsetHeight || 280;
+  const left = Math.min(Math.max(8, rect.right - width), window.innerWidth - width - 8);
+  const top = Math.min(rect.bottom + 6, window.innerHeight - height - 8);
+  menu.style.left = `${left}px`;
+  menu.style.top = `${Math.max(48, top)}px`;
+  menu.style.right = "auto";
+  menu.querySelector<HTMLButtonElement>(".menu-row:not(:disabled)")?.focus();
+}
+
+function renderToolbarOverflowMenu() {
+  const list = document.getElementById("toolbarOverflowList");
+  if (!list) return;
+  list.innerHTML = "";
+  const group = document.getElementById("toolbarPrimaryActions");
+  if (!group) return;
+
+  const ordered = Array.from(group.querySelectorAll<HTMLElement>("[data-toolbar-rank]"))
+    .filter((el) => el.classList.contains("toolbar-overflowed") && el.id !== "toolbarOverflowButton");
+
+  for (const source of ordered) {
+    if (source.id === "toolboxQuickGroup") {
+      source.querySelectorAll<HTMLButtonElement>("[data-toolbox-quick]").forEach((quick) => {
+        list.appendChild(createToolbarOverflowRow({
+          label: quick.getAttribute("aria-label") || quick.title || "快捷工具",
+          iconHtml: quick.querySelector(".icon-slot")?.innerHTML || "",
+          disabled: quick.disabled,
+          onClick: () => quick.click(),
+        }));
+      });
+      continue;
+    }
+    if (source.id === "markdownModeControl") {
+      source.querySelectorAll<HTMLButtonElement>("button").forEach((modeBtn) => {
+        list.appendChild(createToolbarOverflowRow({
+          label: modeBtn.getAttribute("aria-label") || modeBtn.title || "Markdown 模式",
+          iconHtml: modeBtn.querySelector(".icon-slot")?.innerHTML || "",
+          disabled: modeBtn.disabled,
+          onClick: () => modeBtn.click(),
+        }));
+      });
+      continue;
+    }
+
+    if (!(source instanceof HTMLButtonElement)) continue;
+    const label =
+      source.querySelector("[data-label]")?.textContent?.trim()
+      || source.getAttribute("aria-label")
+      || source.title
+      || source.id;
+    list.appendChild(createToolbarOverflowRow({
+      label,
+      iconHtml: source.querySelector(".icon-slot")?.innerHTML || "",
+      disabled: source.disabled,
+      active: source.classList.contains("state-on") || source.classList.contains("active"),
+      onClick: () => {
+        closeToolbarOverflowMenu();
+        source.click();
+      },
+    }));
+  }
+
+  if (!list.childElementCount) {
+    const empty = document.createElement("div");
+    empty.className = "menu-empty";
+    empty.textContent = "没有更多按钮";
+    list.appendChild(empty);
+  }
+  renderIconSlots(list);
+}
+
+function createToolbarOverflowRow(options: {
+  label: string;
+  iconHtml: string;
+  disabled?: boolean;
+  active?: boolean;
+  onClick: () => void;
+}) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `menu-row${options.active ? " active" : ""}`;
+  button.setAttribute("role", "menuitem");
+  button.disabled = Boolean(options.disabled);
+  button.innerHTML = `<span class="icon-slot">${options.iconHtml}</span><strong>${escapeHtml(options.label)}</strong><small></small>`;
+  button.addEventListener("click", () => {
+    if (button.disabled) return;
+    closeMenus();
+    options.onClick();
+  });
+  return button;
+}
+
+async function runEditorContextAction(action: string) {
+  switch (action) {
+    case "cut":
+      void cutEditorSelection();
+      return;
+    case "copy":
+      void copyEditorSelection();
+      return;
+    case "paste":
+      void pasteEditorSelection();
+      return;
+    case "format":
+      await formatActiveDocument();
+      return;
+    case "minify":
+      await minifyActiveDocument();
+      return;
+    case "validate":
+      await validateActiveSyntax();
+      return;
+    case "detect-lang":
+      await maybeDetectLanguageAfterEdit("manual");
+      return;
+    case "upper":
+      transformToUppercase();
+      return;
+    case "lower":
+      transformToLowercase();
+      return;
+    case "toolbox":
+      openToolboxPage();
+      return;
+    case "compare-disk":
+      await compareActiveWithDisk();
+      return;
+    case "compare-text":
+      openTextDiffDialog({ seedSelection: true });
+      return;
+    default:
+      if (action.startsWith("tool:")) {
+        const toolId = action.slice("tool:".length) as ToolboxItemId;
+        await applyToolboxQuickItem(toolId);
+      }
+  }
+}
+
 async function formatActiveDocument() {
   const doc = activeDocument();
   if (doc.readOnly || isMarkdownWysiwygActive()) {
@@ -9190,80 +11418,260 @@ async function formatActiveDocument() {
     return;
   }
 
-  const before = doc.model.getValue();
+  const target = getToolboxTargetRange();
+  const before = target.source;
   if (!before.trim()) {
-    log(`${languageLabel(doc.language)} 内容为空，无需格式化`);
+    log(`${languageLabel(doc.language)} ${target.fullDocument ? "内容" : "选区"}为空，无需格式化`);
     return;
   }
 
   try {
+    let formatted = before;
     if (doc.language === "sql") {
       const options = doc.model.getOptions();
-      const formatted = await withBusy(
+      formatted = await withBusy(
         "正在格式化 SQL",
         () => formatSqlInWorker(before, options.tabSize, !options.insertSpaces),
         { lockEditor: false },
       );
-      replaceModelText(doc.model, normalizeFormattedText(formatted, doc.model));
     } else if (doc.language === "json") {
       try {
         const options = doc.model.getOptions();
         const indentation = options.insertSpaces ? options.tabSize : "\t";
-        const formatted = JSON.stringify(JSON.parse(before), null, indentation);
-        replaceModelText(doc.model, normalizeFormattedText(formatted, doc.model));
+        formatted = JSON.stringify(JSON.parse(before), null, indentation);
       } catch (error) {
-        log(`JSON 格式化失败：${formatParseError(error)}。请先修正语法错误。`);
+        await offerJsonRepairAfterFailure({
+          error,
+          target,
+          mode: "format",
+          source: before,
+        });
         return;
       }
     } else if (doc.language === "xml" || doc.language === "html") {
       const options = doc.model.getOptions();
       const indent = options.insertSpaces ? " ".repeat(options.tabSize) : "\t";
-      const formatted = beautifyMarkup(before, indent, doc.language === "html");
+      formatted = beautifyMarkup(before, indent, doc.language === "html");
       if (!formatted.trim()) {
         log(`${languageLabel(doc.language)} 格式化结果为空，已取消写回`);
         return;
       }
-      replaceModelText(doc.model, normalizeFormattedText(formatted, doc.model));
-      log(`${languageLabel(doc.language)} 已启发式格式化（复杂标签/脚本请人工复核）`);
-      editor.focus();
-      return;
     } else if (action?.isSupported()) {
+      if (!target.fullDocument) {
+        const selectionAction = editor.getAction("editor.action.formatSelection");
+        if (selectionAction?.isSupported()) {
+          await selectionAction.run();
+          editor.focus();
+          log(`${languageLabel(doc.language)} 已格式化选区`);
+          await autoSaveIfOnDisk(doc, "格式化后已保存");
+          return;
+        }
+      }
       await action.run();
+      editor.focus();
+      log(`${languageLabel(doc.language)} 已格式化`);
+      await autoSaveIfOnDisk(doc, "格式化后已保存");
+      return;
     } else {
       log(`${languageLabel(doc.language)} 暂无可用格式化器`);
       return;
     }
+
+    formatted = normalizeFormattedText(formatted, doc.model);
+    if (formatted === before) {
+      log(`${languageLabel(doc.language)} 已是规范格式`);
+      editor.focus();
+      return;
+    }
+    if (target.fullDocument) {
+      replaceModelText(doc.model, formatted);
+    } else {
+      editor.pushUndoStop();
+      editor.executeEdits("format-selection", [{
+        range: target.range,
+        text: formatted,
+        forceMoveMarkers: true,
+      }]);
+      editor.pushUndoStop();
+    }
     editor.focus();
-    const label = languageLabel(doc.language);
-    log(doc.model.getValue() === before ? `${label} 已是规范格式` : `${label} 已格式化`);
+    const scope = target.fullDocument ? "" : "选区";
+    const kind = doc.language === "xml" || doc.language === "html"
+      ? "启发式格式化（复杂标签请复核）"
+      : "已格式化";
+    log(`${languageLabel(doc.language)}${scope}${kind}`);
+    await autoSaveIfOnDisk(doc, "格式化后已保存");
   } catch (error) {
-    log(`${languageLabel(doc.language)} 格式化失败：${formatParseError(error)}`);
+    log(`${languageLabel(doc.language)} 格式化失败：${formatParseError(error)}（未修改原文）`);
   }
 }
 
 async function minifyActiveDocument() {
   const doc = activeDocument();
   if (!isMinifyActionSupported(doc)) {
-    log(`${languageLabel(doc.language)} 不支持压缩`);
+    log(`${languageLabel(doc.language)} 不支持压缩（当前支持 JSON / XML / HTML）`);
     return;
   }
-  const before = doc.model.getValue();
+  const target = getToolboxTargetRange();
+  const before = target.source;
   if (!before.trim()) {
-    log("内容为空，无需压缩");
+    log(`${target.fullDocument ? "内容" : "选区"}为空，无需压缩`);
     return;
   }
   try {
     let next = before;
     if (doc.language === "json") {
-      next = JSON.stringify(JSON.parse(before));
+      try {
+        next = JSON.stringify(JSON.parse(before));
+      } catch (error) {
+        await offerJsonRepairAfterFailure({
+          error,
+          target,
+          mode: "minify",
+          source: before,
+        });
+        return;
+      }
     } else if (doc.language === "xml" || doc.language === "html") {
       next = minifyMarkup(before);
     }
-    replaceModelText(doc.model, normalizeFormattedText(next, doc.model));
+    next = normalizeFormattedText(next, doc.model);
+    if (next === before) {
+      log("已是压缩格式");
+      editor.focus();
+      return;
+    }
+    if (target.fullDocument) {
+      replaceModelText(doc.model, next);
+    } else {
+      editor.pushUndoStop();
+      editor.executeEdits("minify-selection", [{
+        range: target.range,
+        text: next,
+        forceMoveMarkers: true,
+      }]);
+      editor.pushUndoStop();
+    }
     editor.focus();
-    log(doc.model.getValue() === before ? "已是压缩格式" : `${languageLabel(doc.language)} 已压缩`);
+    log(`${languageLabel(doc.language)} 已压缩${target.fullDocument ? "" : "选区"}`);
+    await autoSaveIfOnDisk(doc, "压缩后已保存");
   } catch (error) {
-    log(`压缩失败：${formatParseError(error)}`);
+    log(`压缩失败：${formatParseError(error)}（未修改原文）`);
+  }
+}
+
+
+/** JSON 格式化/压缩失败时：询问是否自动修复后再试（只询问一次，失败不清空原文） */
+async function offerJsonRepairAfterFailure(options: {
+  error: unknown;
+  target: { fullDocument: boolean; range: monaco.Range; source: string };
+  mode: "format" | "minify";
+  source: string;
+}) {
+  const doc = activeDocument();
+  const docId = doc.id;
+  const detail = formatParseError(options.error);
+  const actionLabel = options.mode === "format" ? "格式化" : "压缩";
+  const scope = options.target.fullDocument ? "全文" : "选区";
+  notify(`JSON ${actionLabel}失败（${scope}）：${detail}（未修改原文）`, "error");
+  log(`JSON ${actionLabel}失败：${detail}。请先修正语法错误（未修改原文）。`);
+
+  if (doc.readOnly || isMarkdownWysiwygActive(doc)) return;
+
+  const confirmed = await askConfirm({
+    title: "JSON 语法错误",
+    subtitle: `无法${actionLabel}，是否尝试自动修复？`,
+    body: [
+      detail,
+      "",
+      "可尝试修复：尾逗号、单引号字符串、未加引号的键、简单注释等。",
+      `修复成功后会自动再${actionLabel}。此操作可撤销；修复失败不会清空原文。`,
+    ].join("\n"),
+    okLabel: `修复并${actionLabel}`,
+    cancelLabel: "取消",
+  });
+  if (!confirmed) return;
+  // askConfirm 后验证 doc 是否仍是当前标签
+  if (activeDocument().id !== docId) {
+    log(`JSON 修复已取消：确认期间已切换标签`);
+    return;
+  }
+
+  const repair = runToolboxItem("json-repair", options.source, buildToolboxContext());
+  if (!repair.ok) {
+    notify(`JSON 修复失败：${repair.error}`, "error");
+    log(`JSON 修复失败：${repair.error}`);
+    return;
+  }
+  if (repair.replace === false) {
+    notify("JSON 修复未产生可写回结果", "info");
+    return;
+  }
+
+  // 先写入修复结果（可撤销）
+  if (options.target.fullDocument) {
+    replaceModelText(doc.model, repair.text);
+  } else {
+    editor.pushUndoStop();
+    editor.executeEdits("json-repair", [{
+      range: options.target.range,
+      text: repair.text,
+      forceMoveMarkers: true,
+    }]);
+    editor.pushUndoStop();
+  }
+
+  // 二次格式化/压缩：全文用模型全文；选区用写入后的选区文本
+  let afterRepair = repair.text;
+  if (options.target.fullDocument) {
+    afterRepair = doc.model.getValue();
+  } else {
+    const selection = editor.getSelection();
+    if (selection && !selection.isEmpty()) {
+      afterRepair = doc.model.getValueInRange(selection);
+    }
+  }
+
+  try {
+    const modelOptions = doc.model.getOptions();
+    let finalText: string;
+    if (options.mode === "format") {
+      const indentation = modelOptions.insertSpaces ? modelOptions.tabSize : "\t";
+      finalText = JSON.stringify(JSON.parse(afterRepair), null, indentation);
+    } else {
+      finalText = JSON.stringify(JSON.parse(afterRepair));
+    }
+    finalText = normalizeFormattedText(finalText, doc.model);
+
+    if (options.target.fullDocument) {
+      if (finalText !== doc.model.getValue()) replaceModelText(doc.model, finalText);
+    } else {
+      const selection = editor.getSelection();
+      if (selection && !selection.isEmpty()) {
+        const current = doc.model.getValueInRange(selection);
+        if (current !== finalText) {
+          editor.pushUndoStop();
+          editor.executeEdits(options.mode === "format" ? "format-after-repair" : "minify-after-repair", [{
+            range: selection,
+            text: finalText,
+            forceMoveMarkers: true,
+          }]);
+          editor.pushUndoStop();
+        }
+      }
+    }
+
+    editor.focus();
+    notify(`JSON 已修复并${actionLabel}${options.target.fullDocument ? "" : "（选区）"}`, "success");
+    log(`JSON 已修复并${actionLabel}`);
+    await autoSaveIfOnDisk(doc, `${actionLabel}后已保存`);
+  } catch (error) {
+    editor.focus();
+    notify(
+      `JSON 已写入修复结果，但${actionLabel}仍失败：${formatParseError(error)}。请人工检查（可撤销）。`,
+      "error",
+    );
+    log(`JSON 修复后${actionLabel}仍失败：${formatParseError(error)}`);
   }
 }
 
@@ -9883,6 +12291,11 @@ async function restoreSession() {
     state.searchFavorites = (snapshot.searchFavorites ?? []).slice(0, 30);
     state.findView = snapshot.findView ?? "find";
     state.mode = snapshot.workMode ?? (snapshot.workspaceRoot ? "workspace" : "single");
+    if (!WORKSPACE_SIDEBAR_ENABLED) {
+      state.mode = "single";
+      state.showDirectory = false;
+      state.workspace = null;
+    }
     state.rightTool = snapshot.rightTool === "outline" ? "outline" : "search";
     state.rightSidebarWidth = snapshot.rightSidebarWidth ?? state.rightSidebarWidth;
     state.explorerWidth = Number.isFinite(snapshot.explorerWidth)
@@ -9908,6 +12321,15 @@ async function restoreSession() {
     state.minimap = snapshot.minimap ?? state.minimap;
     state.smoothCaretAnimation = snapshot.smoothCaretAnimation ?? state.smoothCaretAnimation;
     state.renderWhitespace = snapshot.renderWhitespace ?? state.renderWhitespace;
+    state.autoSave = snapshot.autoSave ?? state.autoSave;
+    state.tabSize = [2, 4, 8].includes(Number(snapshot.tabSize)) ? Number(snapshot.tabSize) : state.tabSize;
+    state.insertSpaces = snapshot.insertSpaces ?? state.insertSpaces;
+    state.toolboxRecent = Array.isArray(snapshot.toolboxRecent)
+      ? snapshot.toolboxRecent.filter((id): id is string => typeof id === "string" && isToolboxCatalogItem(id)).slice(0, 12)
+      : state.toolboxRecent;
+    state.toolboxFavorites = Array.isArray(snapshot.toolboxFavorites)
+      ? snapshot.toolboxFavorites.filter((id): id is string => typeof id === "string" && isToolboxCatalogItem(id)).slice(0, 20)
+      : state.toolboxFavorites;
     state.fontSize = snapshot.fontSize ?? state.fontSize;
     state.shellFontMode = normalizeFontMode(snapshot.shellFontMode, state.shellFontMode);
     state.shellFontPreset = isShellFontPreset(snapshot.shellFontPreset) ? snapshot.shellFontPreset : state.shellFontPreset;
@@ -9926,14 +12348,26 @@ async function restoreSession() {
     applySearchSnapshot(snapshot);
     setFindView(state.findView, false);
 
-    if (snapshot.darkMode) {
-      state.darkMode = true;
-      document.body.classList.add("dark");
-      monaco.editor.setTheme("notra-dark");
+    if (resolveAppThemeId(snapshot.themeId)) {
+      const theme = getAppTheme(resolveAppThemeId(snapshot.themeId)!);
+      state.themeId = theme.id;
+      state.darkMode = theme.dark;
+      document.body.dataset.theme = theme.id;
+      document.body.classList.toggle("dark", theme.dark);
+      monaco.editor.setTheme(theme.monaco);
       setThemeButton();
+    } else if (snapshot.darkMode) {
+      state.themeId = "midnight";
+      state.darkMode = true;
+      document.body.dataset.theme = "midnight";
+      document.body.classList.add("dark");
+      monaco.editor.setTheme("notra-midnight");
+      setThemeButton();
+    } else {
+      document.body.dataset.theme = state.themeId || "paper";
     }
 
-    if (snapshot.workspaceRoot) {
+    if (snapshot.workspaceRoot && WORKSPACE_SIDEBAR_ENABLED) {
       try {
         const workspace = await invoke<WorkspaceDto>("read_workspace", { path: snapshot.workspaceRoot });
         state.workspace = workspace;
@@ -10170,6 +12604,7 @@ async function saveSession() {
     activePath: active?.path ?? null,
     activeDraftId: active && !active.path ? ensureDraftId(active) : null,
     darkMode: state.darkMode,
+    themeId: state.themeId,
     contextMenuEnabled: state.contextMenuEnabled,
     defaultAppCandidateEnabled: state.defaultAppCandidateEnabled,
     rightSidebarOpen: !$("findPopover").classList.contains("hidden"),
@@ -10189,6 +12624,11 @@ async function saveSession() {
     minimap: state.minimap,
     smoothCaretAnimation: state.smoothCaretAnimation,
     renderWhitespace: state.renderWhitespace,
+    autoSave: state.autoSave,
+    tabSize: state.tabSize,
+    insertSpaces: state.insertSpaces,
+    toolboxRecent: state.toolboxRecent.slice(0, 12),
+    toolboxFavorites: state.toolboxFavorites.slice(0, 20),
     fontSize: state.fontSize,
     shellFontMode: state.shellFontMode,
     shellFontPreset: state.shellFontPreset,
@@ -10240,12 +12680,39 @@ function uniquePaths(paths: string[]) {
 }
 
 function toggleTheme() {
-  setThemeMode(!state.darkMode);
+  cycleAppTheme();
+}
+
+function renderSettingsThemeGrid() {
+  const grid = document.getElementById("settingsThemeGrid");
+  if (!grid) return;
+  grid.innerHTML = "";
+  for (const theme of APP_THEMES) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `theme-card${theme.id === state.themeId ? " active" : ""}`;
+    button.dataset.themeId = theme.id;
+    button.setAttribute("role", "option");
+    button.setAttribute("aria-selected", String(theme.id === state.themeId));
+    button.style.setProperty("--swatch-1", theme.swatches[0]);
+    button.style.setProperty("--swatch-2", theme.swatches[1]);
+    button.style.setProperty("--swatch-3", theme.swatches[2]);
+    button.style.setProperty("--swatch-4", theme.swatches[3]);
+    button.innerHTML = `
+      <span class="theme-swatches show-4" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+      <strong>${escapeHtml(theme.label)}</strong>
+      <span>${escapeHtml(theme.description)}</span>
+      <small class="theme-inspired">${escapeHtml(theme.inspiredBy)}</small>
+      <em>当前</em>
+    `;
+    grid.appendChild(button);
+  }
 }
 
 function setThemeButton() {
-  setButtonLabel("themeButton", state.darkMode ? "亮色" : "深色", state.darkMode ? "切换到亮色" : "切换到深色");
-  setIconSlot($("themeButton").querySelector<HTMLElement>(".icon-slot"), state.darkMode ? "Sun" : "Moon");
+  const theme = getAppTheme();
+  setButtonLabel("themeButton", theme.label, `主题：${theme.label}（点击切换下一套）`);
+  setIconSlot($("themeButton").querySelector<HTMLElement>(".icon-slot"), theme.dark ? "Moon" : "Sun");
 }
 
 function registerToml() {
@@ -10371,97 +12838,493 @@ function ensureSqlFormatterWorker() {
 }
 
 function defineThemes() {
+  monaco.editor.defineTheme("notra-paper", {
+    base: "vs",
+    inherit: true,
+    rules: [
+      { token: "comment", foreground: "59636e", fontStyle: "italic" },
+      { token: "keyword", foreground: "cf222e" },
+      { token: "keyword.json", foreground: "0550ae" },
+      { token: "identifier", foreground: "1f2328" },
+      { token: "string", foreground: "0a3069" },
+      { token: "string.key.json", foreground: "0550ae" },
+      { token: "string.value.json", foreground: "0a3069" },
+      { token: "number", foreground: "0550ae" },
+      { token: "number.json", foreground: "0550ae" },
+      { token: "type.identifier", foreground: "953800" },
+      { token: "function", foreground: "8250df" },
+      { token: "variable", foreground: "1f2328" },
+      { token: "tag", foreground: "116329" },
+      { token: "attribute.name", foreground: "0550ae" },
+      { token: "attribute.value", foreground: "0a3069" },
+      { token: "delimiter", foreground: "1f2328" },
+      { token: "delimiter.bracket.json", foreground: "1f2328" },
+      { token: "delimiter.array.json", foreground: "1f2328" },
+      { token: "delimiter.bracket", foreground: "1f2328" },
+    ],
+    colors: {
+      "editor.background": "#ffffff",
+      "editor.foreground": "#1f2328",
+      "editorGutter.background": "#ffffff",
+      "editorLineNumber.foreground": "#8c959f",
+      "editorLineNumber.activeForeground": "#1f2328",
+      "editorCursor.foreground": "#1f2328",
+      "editorBracketHighlight.foreground1": "#0550ae",
+      "editorBracketHighlight.foreground2": "#cf222e",
+      "editorBracketHighlight.foreground3": "#953800",
+      "editorBracketHighlight.foreground4": "#8250df",
+      "editorBracketHighlight.foreground5": "#116329",
+      "editorBracketHighlight.foreground6": "#a40e26",
+      "editor.selectionBackground": "#add6ff80",
+      "editor.inactiveSelectionBackground": "#e7eef7",
+      "editor.lineHighlightBackground": "#eaeef280",
+      "editor.lineHighlightBorder": "#00000000",
+      "editorIndentGuide.background1": "#d0d7de",
+      "editorIndentGuide.activeBackground1": "#8c959f",
+      "editorBracketMatch.background": "#ddf4ff",
+      "editorBracketMatch.border": "#54aeff66",
+      "editorWidget.background": "#ffffff",
+      "editorWidget.border": "#d0d7de",
+      "editorSuggestWidget.background": "#ffffff",
+      "editorSuggestWidget.selectedBackground": "#ddf4ff",
+      "minimap.background": "#ffffff",
+      "editorWhitespace.foreground": "#d0d7de",
+    },
+  });
+
+  monaco.editor.defineTheme("notra-wiki", {
+    base: "vs",
+    inherit: true,
+    rules: [
+      { token: "comment", foreground: "59636e", fontStyle: "italic" },
+      { token: "keyword", foreground: "cf222e" },
+      { token: "keyword.json", foreground: "0550ae" },
+      { token: "identifier", foreground: "1f2328" },
+      { token: "string", foreground: "0a3069" },
+      { token: "string.key.json", foreground: "0550ae" },
+      { token: "string.value.json", foreground: "0a3069" },
+      { token: "number", foreground: "0550ae" },
+      { token: "number.json", foreground: "0550ae" },
+      { token: "type.identifier", foreground: "953800" },
+      { token: "function", foreground: "8250df" },
+      { token: "variable", foreground: "1f2328" },
+      { token: "tag", foreground: "116329" },
+      { token: "attribute.name", foreground: "0550ae" },
+      { token: "attribute.value", foreground: "0a3069" },
+      { token: "delimiter", foreground: "1f2328" },
+      { token: "delimiter.bracket.json", foreground: "1f2328" },
+      { token: "delimiter.array.json", foreground: "1f2328" },
+      { token: "delimiter.bracket", foreground: "1f2328" },
+    ],
+    colors: {
+      "editor.background": "#ffffff",
+      "editor.foreground": "#1f2328",
+      "editorGutter.background": "#ffffff",
+      "editorLineNumber.foreground": "#8c959f",
+      "editorLineNumber.activeForeground": "#1f2328",
+      "editorCursor.foreground": "#1f2328",
+      "editorBracketHighlight.foreground1": "#0550ae",
+      "editorBracketHighlight.foreground2": "#cf222e",
+      "editorBracketHighlight.foreground3": "#953800",
+      "editorBracketHighlight.foreground4": "#8250df",
+      "editorBracketHighlight.foreground5": "#116329",
+      "editorBracketHighlight.foreground6": "#a40e26",
+      "editor.selectionBackground": "#add6ff80",
+      "editor.inactiveSelectionBackground": "#e7eef7",
+      "editor.lineHighlightBackground": "#eaeef280",
+      "editor.lineHighlightBorder": "#00000000",
+      "editorIndentGuide.background1": "#d0d7de",
+      "editorIndentGuide.activeBackground1": "#8c959f",
+      "editorBracketMatch.background": "#ddf4ff",
+      "editorBracketMatch.border": "#54aeff66",
+      "editorWidget.background": "#ffffff",
+      "editorWidget.border": "#d0d7de",
+      "editorSuggestWidget.background": "#ffffff",
+      "editorSuggestWidget.selectedBackground": "#ddf4ff",
+      "minimap.background": "#ffffff",
+      "editorWhitespace.foreground": "#d0d7de",
+    },
+  });
+
+  monaco.editor.defineTheme("notra-border", {
+    base: "vs",
+    inherit: true,
+    rules: [
+      { token: "comment", foreground: "59636e", fontStyle: "italic" },
+      { token: "keyword", foreground: "cf222e" },
+      { token: "keyword.json", foreground: "0550ae" },
+      { token: "identifier", foreground: "1f2328" },
+      { token: "string", foreground: "0a3069" },
+      { token: "string.key.json", foreground: "0550ae" },
+      { token: "string.value.json", foreground: "0a3069" },
+      { token: "number", foreground: "0550ae" },
+      { token: "number.json", foreground: "0550ae" },
+      { token: "type.identifier", foreground: "953800" },
+      { token: "function", foreground: "8250df" },
+      { token: "variable", foreground: "1f2328" },
+      { token: "tag", foreground: "116329" },
+      { token: "attribute.name", foreground: "0550ae" },
+      { token: "attribute.value", foreground: "0a3069" },
+      { token: "delimiter", foreground: "1f2328" },
+      { token: "delimiter.bracket.json", foreground: "1f2328" },
+      { token: "delimiter.array.json", foreground: "1f2328" },
+      { token: "delimiter.bracket", foreground: "1f2328" },
+    ],
+    colors: {
+      "editor.background": "#ffffff",
+      "editor.foreground": "#1f2328",
+      "editorGutter.background": "#ffffff",
+      "editorLineNumber.foreground": "#8c959f",
+      "editorLineNumber.activeForeground": "#1f2328",
+      "editorCursor.foreground": "#1f2328",
+      "editorBracketHighlight.foreground1": "#0550ae",
+      "editorBracketHighlight.foreground2": "#cf222e",
+      "editorBracketHighlight.foreground3": "#953800",
+      "editorBracketHighlight.foreground4": "#8250df",
+      "editorBracketHighlight.foreground5": "#116329",
+      "editorBracketHighlight.foreground6": "#a40e26",
+      "editor.selectionBackground": "#add6ff80",
+      "editor.inactiveSelectionBackground": "#e7eef7",
+      "editor.lineHighlightBackground": "#eaeef280",
+      "editor.lineHighlightBorder": "#00000000",
+      "editorIndentGuide.background1": "#d0d7de",
+      "editorIndentGuide.activeBackground1": "#8c959f",
+      "editorBracketMatch.background": "#ddf4ff",
+      "editorBracketMatch.border": "#54aeff66",
+      "editorWidget.background": "#ffffff",
+      "editorWidget.border": "#d0d7de",
+      "editorSuggestWidget.background": "#ffffff",
+      "editorSuggestWidget.selectedBackground": "#ddf4ff",
+      "minimap.background": "#ffffff",
+      "editorWhitespace.foreground": "#d0d7de",
+    },
+  });
+
+  monaco.editor.defineTheme("notra-cupertino", {
+    base: "vs",
+    inherit: true,
+    rules: [
+      { token: "comment", foreground: "59636e", fontStyle: "italic" },
+      { token: "keyword", foreground: "cf222e" },
+      { token: "keyword.json", foreground: "0550ae" },
+      { token: "identifier", foreground: "1f2328" },
+      { token: "string", foreground: "0a3069" },
+      { token: "string.key.json", foreground: "0550ae" },
+      { token: "string.value.json", foreground: "0a3069" },
+      { token: "number", foreground: "0550ae" },
+      { token: "number.json", foreground: "0550ae" },
+      { token: "type.identifier", foreground: "953800" },
+      { token: "function", foreground: "8250df" },
+      { token: "variable", foreground: "1f2328" },
+      { token: "tag", foreground: "116329" },
+      { token: "attribute.name", foreground: "0550ae" },
+      { token: "attribute.value", foreground: "0a3069" },
+      { token: "delimiter", foreground: "1f2328" },
+      { token: "delimiter.bracket.json", foreground: "1f2328" },
+      { token: "delimiter.array.json", foreground: "1f2328" },
+      { token: "delimiter.bracket", foreground: "1f2328" },
+    ],
+    colors: {
+      "editor.background": "#ffffff",
+      "editor.foreground": "#1f2328",
+      "editorGutter.background": "#ffffff",
+      "editorLineNumber.foreground": "#8c959f",
+      "editorLineNumber.activeForeground": "#1f2328",
+      "editorCursor.foreground": "#1f2328",
+      "editorBracketHighlight.foreground1": "#0550ae",
+      "editorBracketHighlight.foreground2": "#cf222e",
+      "editorBracketHighlight.foreground3": "#953800",
+      "editorBracketHighlight.foreground4": "#8250df",
+      "editorBracketHighlight.foreground5": "#116329",
+      "editorBracketHighlight.foreground6": "#a40e26",
+      "editor.selectionBackground": "#add6ff80",
+      "editor.inactiveSelectionBackground": "#e7eef7",
+      "editor.lineHighlightBackground": "#eaeef280",
+      "editor.lineHighlightBorder": "#00000000",
+      "editorIndentGuide.background1": "#d0d7de",
+      "editorIndentGuide.activeBackground1": "#8c959f",
+      "editorBracketMatch.background": "#ddf4ff",
+      "editorBracketMatch.border": "#54aeff66",
+      "editorWidget.background": "#ffffff",
+      "editorWidget.border": "#d0d7de",
+      "editorSuggestWidget.background": "#ffffff",
+      "editorSuggestWidget.selectedBackground": "#ddf4ff",
+      "minimap.background": "#ffffff",
+      "editorWhitespace.foreground": "#d0d7de",
+    },
+  });
+
+  monaco.editor.defineTheme("notra-focus", {
+    base: "vs",
+    inherit: true,
+    rules: [
+      { token: "comment", foreground: "59636e", fontStyle: "italic" },
+      { token: "keyword", foreground: "cf222e" },
+      { token: "keyword.json", foreground: "0550ae" },
+      { token: "identifier", foreground: "1f2328" },
+      { token: "string", foreground: "0a3069" },
+      { token: "string.key.json", foreground: "0550ae" },
+      { token: "string.value.json", foreground: "0a3069" },
+      { token: "number", foreground: "0550ae" },
+      { token: "number.json", foreground: "0550ae" },
+      { token: "type.identifier", foreground: "953800" },
+      { token: "function", foreground: "8250df" },
+      { token: "variable", foreground: "1f2328" },
+      { token: "tag", foreground: "116329" },
+      { token: "attribute.name", foreground: "0550ae" },
+      { token: "attribute.value", foreground: "0a3069" },
+      { token: "delimiter", foreground: "1f2328" },
+      { token: "delimiter.bracket.json", foreground: "1f2328" },
+      { token: "delimiter.array.json", foreground: "1f2328" },
+      { token: "delimiter.bracket", foreground: "1f2328" },
+    ],
+    colors: {
+      "editor.background": "#ffffff",
+      "editor.foreground": "#1f2328",
+      "editorGutter.background": "#ffffff",
+      "editorLineNumber.foreground": "#8c959f",
+      "editorLineNumber.activeForeground": "#1f2328",
+      "editorCursor.foreground": "#1f2328",
+      "editorBracketHighlight.foreground1": "#0550ae",
+      "editorBracketHighlight.foreground2": "#cf222e",
+      "editorBracketHighlight.foreground3": "#953800",
+      "editorBracketHighlight.foreground4": "#8250df",
+      "editorBracketHighlight.foreground5": "#116329",
+      "editorBracketHighlight.foreground6": "#a40e26",
+      "editor.selectionBackground": "#add6ff80",
+      "editor.inactiveSelectionBackground": "#e7eef7",
+      "editor.lineHighlightBackground": "#eaeef280",
+      "editor.lineHighlightBorder": "#00000000",
+      "editorIndentGuide.background1": "#d0d7de",
+      "editorIndentGuide.activeBackground1": "#8c959f",
+      "editorBracketMatch.background": "#ddf4ff",
+      "editorBracketMatch.border": "#54aeff66",
+      "editorWidget.background": "#ffffff",
+      "editorWidget.border": "#d0d7de",
+      "editorSuggestWidget.background": "#ffffff",
+      "editorSuggestWidget.selectedBackground": "#ddf4ff",
+      "minimap.background": "#ffffff",
+      "editorWhitespace.foreground": "#d0d7de",
+    },
+  });
+
+  monaco.editor.defineTheme("notra-midnight", {
+    base: "vs-dark",
+    inherit: true,
+    rules: [
+      { token: "comment", foreground: "8b949e", fontStyle: "italic" },
+      { token: "keyword", foreground: "ff7b72" },
+      { token: "keyword.json", foreground: "79c0ff" },
+      { token: "identifier", foreground: "e6edf3" },
+      { token: "string", foreground: "a5d6ff" },
+      { token: "string.key.json", foreground: "79c0ff" },
+      { token: "string.value.json", foreground: "a5d6ff" },
+      { token: "number", foreground: "79c0ff" },
+      { token: "number.json", foreground: "79c0ff" },
+      { token: "type.identifier", foreground: "ffa657" },
+      { token: "function", foreground: "d2a8ff" },
+      { token: "variable", foreground: "e6edf3" },
+      { token: "tag", foreground: "7ee787" },
+      { token: "attribute.name", foreground: "79c0ff" },
+      { token: "attribute.value", foreground: "a5d6ff" },
+      { token: "delimiter", foreground: "e6edf3" },
+      { token: "delimiter.bracket.json", foreground: "e6edf3" },
+      { token: "delimiter.array.json", foreground: "e6edf3" },
+      { token: "delimiter.bracket", foreground: "e6edf3" },
+    ],
+    colors: {
+      "editor.background": "#0d1117",
+      "editor.foreground": "#e6edf3",
+      "editorGutter.background": "#0d1117",
+      "editorLineNumber.foreground": "#6e7681",
+      "editorLineNumber.activeForeground": "#e6edf3",
+      "editorCursor.foreground": "#e6edf3",
+      "editorBracketHighlight.foreground1": "#79c0ff",
+      "editorBracketHighlight.foreground2": "#ff7b72",
+      "editorBracketHighlight.foreground3": "#ffa657",
+      "editorBracketHighlight.foreground4": "#d2a8ff",
+      "editorBracketHighlight.foreground5": "#7ee787",
+      "editorBracketHighlight.foreground6": "#ffa198",
+      "editor.selectionBackground": "#264f7840",
+      "editor.inactiveSelectionBackground": "#21262d",
+      "editor.lineHighlightBackground": "#161b22",
+      "editor.lineHighlightBorder": "#00000000",
+      "editorIndentGuide.background1": "#21262d",
+      "editorIndentGuide.activeBackground1": "#6e7681",
+      "editorBracketMatch.background": "#3fb95040",
+      "editorBracketMatch.border": "#3fb95080",
+      "editorWidget.background": "#161b22",
+      "editorWidget.border": "#30363d",
+      "editorSuggestWidget.background": "#161b22",
+      "editorSuggestWidget.selectedBackground": "#1f6feb40",
+      "minimap.background": "#0d1117",
+      "editorWhitespace.foreground": "#30363d",
+    },
+  });
+
+  monaco.editor.defineTheme("notra-aurora", {
+    base: "vs-dark",
+    inherit: true,
+    rules: [
+      { token: "comment", foreground: "8b949e", fontStyle: "italic" },
+      { token: "keyword", foreground: "ff7b72" },
+      { token: "keyword.json", foreground: "79c0ff" },
+      { token: "identifier", foreground: "e6edf3" },
+      { token: "string", foreground: "a5d6ff" },
+      { token: "string.key.json", foreground: "79c0ff" },
+      { token: "string.value.json", foreground: "a5d6ff" },
+      { token: "number", foreground: "79c0ff" },
+      { token: "number.json", foreground: "79c0ff" },
+      { token: "type.identifier", foreground: "ffa657" },
+      { token: "function", foreground: "d2a8ff" },
+      { token: "variable", foreground: "e6edf3" },
+      { token: "tag", foreground: "7ee787" },
+      { token: "attribute.name", foreground: "79c0ff" },
+      { token: "attribute.value", foreground: "a5d6ff" },
+      { token: "delimiter", foreground: "e6edf3" },
+      { token: "delimiter.bracket.json", foreground: "e6edf3" },
+      { token: "delimiter.array.json", foreground: "e6edf3" },
+      { token: "delimiter.bracket", foreground: "e6edf3" },
+    ],
+    colors: {
+      "editor.background": "#0d1117",
+      "editor.foreground": "#e6edf3",
+      "editorGutter.background": "#0d1117",
+      "editorLineNumber.foreground": "#6e7681",
+      "editorLineNumber.activeForeground": "#e6edf3",
+      "editorCursor.foreground": "#e6edf3",
+      "editorBracketHighlight.foreground1": "#79c0ff",
+      "editorBracketHighlight.foreground2": "#ff7b72",
+      "editorBracketHighlight.foreground3": "#ffa657",
+      "editorBracketHighlight.foreground4": "#d2a8ff",
+      "editorBracketHighlight.foreground5": "#7ee787",
+      "editorBracketHighlight.foreground6": "#ffa198",
+      "editor.selectionBackground": "#264f7840",
+      "editor.inactiveSelectionBackground": "#21262d",
+      "editor.lineHighlightBackground": "#161b22",
+      "editor.lineHighlightBorder": "#00000000",
+      "editorIndentGuide.background1": "#21262d",
+      "editorIndentGuide.activeBackground1": "#6e7681",
+      "editorBracketMatch.background": "#3fb95040",
+      "editorBracketMatch.border": "#3fb95080",
+      "editorWidget.background": "#161b22",
+      "editorWidget.border": "#30363d",
+      "editorSuggestWidget.background": "#161b22",
+      "editorSuggestWidget.selectedBackground": "#1f6feb40",
+      "minimap.background": "#0d1117",
+      "editorWhitespace.foreground": "#30363d",
+    },
+  });
+
   monaco.editor.defineTheme("notra-light", {
     base: "vs",
     inherit: true,
     rules: [
-      { token: "comment", foreground: "8390a3" },
-      { token: "keyword", foreground: "3238d8", fontStyle: "bold" },
-      { token: "identifier", foreground: "111827" },
-      { token: "string", foreground: "0f8a5f" },
-      { token: "string.key.json", foreground: "1d4ed8" },
-      { token: "string.value.json", foreground: "0f8a5f" },
-      { token: "number", foreground: "b45309" },
-      { token: "type.identifier", foreground: "0f766e" },
-      { token: "function", foreground: "7c3aed" },
-      { token: "variable", foreground: "0f172a" },
-      { token: "tag", foreground: "1d4ed8" },
-      { token: "attribute.name", foreground: "7c3aed" },
-      { token: "delimiter", foreground: "64748b" },
-      { token: "delimiter.bracket.json", foreground: "3238d8" },
+      { token: "comment", foreground: "59636e", fontStyle: "italic" },
+      { token: "keyword", foreground: "cf222e" },
+      { token: "keyword.json", foreground: "0550ae" },
+      { token: "identifier", foreground: "1f2328" },
+      { token: "string", foreground: "0a3069" },
+      { token: "string.key.json", foreground: "0550ae" },
+      { token: "string.value.json", foreground: "0a3069" },
+      { token: "number", foreground: "0550ae" },
+      { token: "number.json", foreground: "0550ae" },
+      { token: "type.identifier", foreground: "953800" },
+      { token: "function", foreground: "8250df" },
+      { token: "variable", foreground: "1f2328" },
+      { token: "tag", foreground: "116329" },
+      { token: "attribute.name", foreground: "0550ae" },
+      { token: "attribute.value", foreground: "0a3069" },
+      { token: "delimiter", foreground: "1f2328" },
+      { token: "delimiter.bracket.json", foreground: "1f2328" },
+      { token: "delimiter.array.json", foreground: "1f2328" },
+      { token: "delimiter.bracket", foreground: "1f2328" },
     ],
     colors: {
       "editor.background": "#ffffff",
-      "editor.foreground": "#111827",
-      "editorGutter.background": "#f5f8fc",
-      "editorLineNumber.foreground": "#8b97a8",
-      "editorLineNumber.activeForeground": "#3238d8",
-      "editorCursor.foreground": "#3238d8",
-      "editor.selectionBackground": "#dfe4ff",
-      "editor.inactiveSelectionBackground": "#e8edf5",
-      "editor.selectionHighlightBackground": "#add6ff66",
-      "editorBracketMatch.background": "#94a3b866",
-      "editorBracketMatch.border": "#00000000",
-      "editorBracketHighlight.foreground1": "#3238d8",
-      "editorBracketHighlight.foreground2": "#0f8a5f",
-      "editorBracketHighlight.foreground3": "#b45309",
-      "editor.wordHighlightBackground": "#d9e4f280",
-      "editor.wordHighlightStrongBackground": "#c8dcf099",
-      "editor.wordHighlightTextBackground": "#d9e4f280",
-      "editor.wordHighlightBorder": "#00000000",
-      "editor.wordHighlightStrongBorder": "#00000000",
-      "editor.lineHighlightBackground": "#f5f7fa",
+      "editor.foreground": "#1f2328",
+      "editorGutter.background": "#ffffff",
+      "editorLineNumber.foreground": "#8c959f",
+      "editorLineNumber.activeForeground": "#1f2328",
+      "editorCursor.foreground": "#1f2328",
+      "editorBracketHighlight.foreground1": "#0550ae",
+      "editorBracketHighlight.foreground2": "#cf222e",
+      "editorBracketHighlight.foreground3": "#953800",
+      "editorBracketHighlight.foreground4": "#8250df",
+      "editorBracketHighlight.foreground5": "#116329",
+      "editorBracketHighlight.foreground6": "#a40e26",
+      "editor.selectionBackground": "#add6ff80",
+      "editor.inactiveSelectionBackground": "#e7eef7",
+      "editor.lineHighlightBackground": "#eaeef280",
       "editor.lineHighlightBorder": "#00000000",
-      "editorIndentGuide.background1": "#dfe4ec",
-      "editorIndentGuide.activeBackground1": "#aeb8c7",
+      "editorIndentGuide.background1": "#d0d7de",
+      "editorIndentGuide.activeBackground1": "#8c959f",
+      "editorBracketMatch.background": "#ddf4ff",
+      "editorBracketMatch.border": "#54aeff66",
+      "editorWidget.background": "#ffffff",
+      "editorWidget.border": "#d0d7de",
+      "editorSuggestWidget.background": "#ffffff",
+      "editorSuggestWidget.selectedBackground": "#ddf4ff",
+      "minimap.background": "#ffffff",
+      "editorWhitespace.foreground": "#d0d7de",
     },
   });
+
   monaco.editor.defineTheme("notra-dark", {
     base: "vs-dark",
     inherit: true,
     rules: [
-      { token: "comment", foreground: "93a0b4" },
-      { token: "keyword", foreground: "858bff", fontStyle: "bold" },
-      { token: "identifier", foreground: "e5e7eb" },
-      { token: "string", foreground: "6ee7b7" },
-      { token: "string.key.json", foreground: "93c5fd" },
-      { token: "string.value.json", foreground: "6ee7b7" },
-      { token: "number", foreground: "fbbf24" },
-      { token: "type.identifier", foreground: "5eead4" },
-      { token: "function", foreground: "c4b5fd" },
-      { token: "variable", foreground: "e5e7eb" },
-      { token: "tag", foreground: "93c5fd" },
-      { token: "attribute.name", foreground: "c4b5fd" },
-      { token: "delimiter", foreground: "94a3b8" },
-      { token: "delimiter.bracket.json", foreground: "858bff" },
+      { token: "comment", foreground: "8b949e", fontStyle: "italic" },
+      { token: "keyword", foreground: "ff7b72" },
+      { token: "keyword.json", foreground: "79c0ff" },
+      { token: "identifier", foreground: "e6edf3" },
+      { token: "string", foreground: "a5d6ff" },
+      { token: "string.key.json", foreground: "79c0ff" },
+      { token: "string.value.json", foreground: "a5d6ff" },
+      { token: "number", foreground: "79c0ff" },
+      { token: "number.json", foreground: "79c0ff" },
+      { token: "type.identifier", foreground: "ffa657" },
+      { token: "function", foreground: "d2a8ff" },
+      { token: "variable", foreground: "e6edf3" },
+      { token: "tag", foreground: "7ee787" },
+      { token: "attribute.name", foreground: "79c0ff" },
+      { token: "attribute.value", foreground: "a5d6ff" },
+      { token: "delimiter", foreground: "e6edf3" },
+      { token: "delimiter.bracket.json", foreground: "e6edf3" },
+      { token: "delimiter.array.json", foreground: "e6edf3" },
+      { token: "delimiter.bracket", foreground: "e6edf3" },
     ],
     colors: {
-      "editor.background": "#151b26",
-      "editor.foreground": "#edf2fb",
-      "editorGutter.background": "#1d2431",
-      "editorLineNumber.foreground": "#667085",
-      "editorLineNumber.activeForeground": "#858bff",
-      "editorCursor.foreground": "#858bff",
-      "editor.selectionBackground": "#313766",
-      "editor.inactiveSelectionBackground": "#2a3140",
-      "editor.selectionHighlightBackground": "#264f7866",
-      "editorBracketMatch.background": "#64748b80",
-      "editorBracketMatch.border": "#00000000",
-      "editorBracketHighlight.foreground1": "#858bff",
-      "editorBracketHighlight.foreground2": "#6ee7b7",
-      "editorBracketHighlight.foreground3": "#fbbf24",
-      "editor.wordHighlightBackground": "#3a425580",
-      "editor.wordHighlightStrongBackground": "#46546b99",
-      "editor.wordHighlightTextBackground": "#3a425580",
-      "editor.wordHighlightBorder": "#00000000",
-      "editor.wordHighlightStrongBorder": "#00000000",
-      "editor.lineHighlightBackground": "#1c2330",
+      "editor.background": "#0d1117",
+      "editor.foreground": "#e6edf3",
+      "editorGutter.background": "#0d1117",
+      "editorLineNumber.foreground": "#6e7681",
+      "editorLineNumber.activeForeground": "#e6edf3",
+      "editorCursor.foreground": "#e6edf3",
+      "editorBracketHighlight.foreground1": "#79c0ff",
+      "editorBracketHighlight.foreground2": "#ff7b72",
+      "editorBracketHighlight.foreground3": "#ffa657",
+      "editorBracketHighlight.foreground4": "#d2a8ff",
+      "editorBracketHighlight.foreground5": "#7ee787",
+      "editorBracketHighlight.foreground6": "#ffa198",
+      "editor.selectionBackground": "#264f7840",
+      "editor.inactiveSelectionBackground": "#21262d",
+      "editor.lineHighlightBackground": "#161b22",
       "editor.lineHighlightBorder": "#00000000",
-      "editorIndentGuide.background1": "#2c3442",
-      "editorIndentGuide.activeBackground1": "#596579",
+      "editorIndentGuide.background1": "#21262d",
+      "editorIndentGuide.activeBackground1": "#6e7681",
+      "editorBracketMatch.background": "#3fb95040",
+      "editorBracketMatch.border": "#3fb95080",
+      "editorWidget.background": "#161b22",
+      "editorWidget.border": "#30363d",
+      "editorSuggestWidget.background": "#161b22",
+      "editorSuggestWidget.selectedBackground": "#1f6feb40",
+      "minimap.background": "#0d1117",
+      "editorWhitespace.foreground": "#30363d",
     },
   });
 }
+
 
 function languageLabel(language: string) {
   return languageOptions().find(([id]) => id === language)?.[1] ?? humanizeLanguageId(language);
@@ -10623,6 +13486,192 @@ function highlightMatchLine(match: TextMatchDto) {
 function log(message: string) {
   state.logs.unshift(`${new Date().toLocaleTimeString()}  ${message}`);
   state.logs = state.logs.slice(0, 200);
+}
+
+/** 用户可见提示：底部 Toast + 状态栏短讯（log 本身不渲染到 UI） */
+
+let autoSaveTimer = 0;
+function scheduleAutoSave(doc: OpenDocument) {
+  if (!state.autoSave || !doc.path || doc.readOnly) return;
+  window.clearTimeout(autoSaveTimer);
+  autoSaveTimer = window.setTimeout(() => {
+    void autoSaveIfOnDisk(doc, "自动保存");
+  }, 1200);
+}
+
+function setAutoSave(enabled: boolean) {
+  state.autoSave = enabled;
+  renderSettingsMenu();
+  scheduleSessionSave();
+  notify(enabled ? "已开启自动保存" : "已关闭自动保存", "success");
+}
+
+function setTabSize(size: number) {
+  if (![2, 4, 8].includes(size) || state.tabSize === size) return;
+  state.tabSize = size;
+  applyEditorSettings();
+  // also update model options for open docs
+  for (const doc of state.documents) {
+    try { doc.model.updateOptions({ tabSize: state.tabSize, insertSpaces: state.insertSpaces }); } catch { /* ignore */ }
+  }
+  renderSettingsMenu();
+  scheduleSessionSave();
+  notify(`Tab 宽度：${size}`, "success");
+}
+
+function setInsertSpaces(enabled: boolean) {
+  if (state.insertSpaces === enabled) return;
+  state.insertSpaces = enabled;
+  applyEditorSettings();
+  for (const doc of state.documents) {
+    try { doc.model.updateOptions({ tabSize: state.tabSize, insertSpaces: state.insertSpaces }); } catch { /* ignore */ }
+  }
+  renderSettingsMenu();
+  scheduleSessionSave();
+  notify(enabled ? "Tab 键插入空格" : "Tab 键插入制表符", "success");
+}
+
+function rememberToolboxUse(toolId: string) {
+  if (!isToolboxCatalogItem(toolId)) return;
+  state.toolboxRecent = [toolId, ...state.toolboxRecent.filter((id) => id !== toolId)].slice(0, 12);
+  scheduleSessionSave();
+  renderToolboxPinned();
+  scheduleToolbarQuickTools();
+}
+
+function toggleToolboxFavorite(toolId: string) {
+  if (!isToolboxCatalogItem(toolId)) return;
+  if (state.toolboxFavorites.includes(toolId)) {
+    state.toolboxFavorites = state.toolboxFavorites.filter((id) => id !== toolId);
+    notify("已取消收藏", "info");
+  } else {
+    state.toolboxFavorites = [toolId, ...state.toolboxFavorites].slice(0, 20);
+    notify("已收藏工具", "success");
+  }
+  scheduleSessionSave();
+  renderToolboxPinned();
+  scheduleToolbarQuickTools();
+}
+
+function renderToolboxPinned() {
+  const host = document.getElementById("toolboxPinned");
+  if (!host) return;
+  host.innerHTML = "";
+  const favs = state.toolboxFavorites
+    .filter((id) => isToolboxCatalogItem(id))
+    .map((id) => getToolboxItem(id))
+    .filter(Boolean);
+  const recents = state.toolboxRecent
+    .filter((id) => isToolboxCatalogItem(id))
+    .map((id) => getToolboxItem(id))
+    .filter((item): item is NonNullable<typeof item> => Boolean(item) && !state.toolboxFavorites.includes(item!.id));
+  const addGroup = (title: string, items: { id: string; title: string }[]) => {
+    if (!items.length) return;
+    const label = document.createElement("div");
+    label.className = "toolbox-pin-group-title";
+    label.textContent = title;
+    host.appendChild(label);
+    const row = document.createElement("div");
+    row.className = "toolbox-pin-row";
+    for (const item of items.slice(0, 8)) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = `toolbox-pin-chip${item.id === toolboxSelectedId ? " active" : ""}`;
+      chip.textContent = item.title;
+      chip.title = item.title;
+      chip.addEventListener("click", () => {
+        const full = getToolboxItem(item.id);
+        if (!full) return;
+        toolboxCategory = full.category;
+        toolboxSelectedId = full.id;
+        toolboxRememberChoice = true;
+        renderToolboxPage();
+        void previewSelectedToolboxItem();
+      });
+      chip.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+        toggleToolboxFavorite(item.id);
+      });
+      row.appendChild(chip);
+    }
+    host.appendChild(row);
+  };
+  addGroup("收藏（右键可取消）", favs as { id: string; title: string }[]);
+  addGroup("最近", recents as { id: string; title: string }[]);
+}
+
+let toolbarScopeBadgeFrame = 0;
+function updateToolbarScopeBadge() {
+  if (toolbarScopeBadgeFrame !== 0) return;
+  toolbarScopeBadgeFrame = window.requestAnimationFrame(() => {
+    toolbarScopeBadgeFrame = 0;
+    const badge = document.getElementById("toolbarScopeBadge");
+    if (!badge || !editor) return;
+    try {
+      const selection = editor.getSelection();
+      const model = editor.getModel();
+      if (!selection || selection.isEmpty() || !model) {
+        badge.classList.add("hidden");
+        badge.textContent = "";
+        return;
+      }
+      const lines = Math.abs(selection.endLineNumber - selection.startLineNumber) + 1;
+      const chars = model.getValueLengthInRange(selection);
+      const next = lines > 1 ? `选区 ${lines} 行` : `选区 ${chars} 字`;
+      if (badge.textContent !== next) badge.textContent = next;
+      badge.classList.remove("hidden");
+      badge.title = "工具默认作用于当前选区；无选区时作用于全文";
+    } catch {
+      badge.classList.add("hidden");
+    }
+  });
+}
+
+function notify(
+  message: string,
+  kind: "info" | "success" | "error" = "info",
+  options?: { actionLabel?: string; onAction?: () => void },
+) {
+  log(message);
+  const toast = document.getElementById("appToast");
+  if (toast) {
+    toast.className = `app-toast ${kind}${options?.onAction ? " has-action" : ""}`;
+    toast.replaceChildren();
+    toast.append(document.createTextNode(message));
+    if (options?.onAction && options.actionLabel) {
+      const action = document.createElement("button");
+      action.type = "button";
+      action.className = "app-toast-action";
+      action.textContent = options.actionLabel;
+      action.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        toast.classList.add("hidden");
+        options.onAction?.();
+      });
+      toast.appendChild(action);
+    }
+    toast.classList.remove("hidden");
+    toast.onclick = (event) => {
+      if ((event.target as HTMLElement | null)?.closest?.(".app-toast-action")) return;
+      toast.classList.add("hidden");
+    };
+    window.clearTimeout(appToastTimer);
+    appToastTimer = window.setTimeout(() => {
+      toast.classList.add("hidden");
+    }, kind === "error" ? 6500 : options?.onAction ? 5600 : 3200);
+  }
+  statusNoticeText = message;
+  const busy = document.getElementById("statusBusy");
+  if (busy && !state.busyMessage) {
+    const cls = kind === "error" ? "status-notice error" : kind === "success" ? "status-notice success" : "status-notice";
+    busy.innerHTML = `<span class="${cls}">${escapeHtml(message)}</span>`;
+  }
+  window.clearTimeout(statusNoticeTimer);
+  statusNoticeTimer = window.setTimeout(() => {
+    statusNoticeText = "";
+    if (!state.busyMessage) renderChrome();
+  }, kind === "error" ? 7000 : 3800);
 }
 
 function escapeHtml(value: string) {
