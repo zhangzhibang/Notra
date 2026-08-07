@@ -22,7 +22,8 @@ function check(name, fn) {
   }
 }
 
-check("json pretty", () => {
+check("json pretty internal", () => {
+  assert.equal(toolbox.isToolboxCatalogItem("json-pretty"), false);
   const result = toolbox.runToolboxItem("json-pretty", "{\"b\":1,\"a\":2}");
   assert.equal(result.ok, true);
   assert.equal(result.text, "{\n  \"b\": 1,\n  \"a\": 2\n}");
@@ -82,12 +83,16 @@ check("json array to csv stable headers", () => {
 
 check("matches whitelist", () => {
   const upper = toolbox.getToolboxItem("upper");
-  const recipe = toolbox.getToolboxItem("recipe-json-pretty");
+  const recipe = toolbox.getToolboxItem("recipe-json-fix");
   const diff = toolbox.getToolboxItem("json-diff");
   assert.equal(toolbox.toolboxSupportsMatches(upper), true);
   assert.equal(toolbox.toolboxSupportsMatches(recipe), false);
   assert.equal(toolbox.toolboxSupportsMatches(diff), false);
   assert.ok(toolbox.toolboxMatchesBlockReason(recipe));
+  assert.equal(toolbox.isToolboxCatalogItem("upper"), false);
+  assert.equal(toolbox.isToolboxCatalogItem("json-sort-keys"), true);
+  assert.equal(toolbox.isToolboxCatalogItem("eol-lf"), false);
+  assert.equal(toolbox.isToolboxCatalogItem("jwt-pretty"), false);
 });
 
 check("destructive flags", () => {
@@ -108,6 +113,140 @@ check("json diff", () => {
   assert.equal(result.replace, false);
   assert.match(result.text, /\$\.a/);
   assert.match(result.text, /\$\.b/);
+});
+
+
+check("jwt decode", () => {
+  // header {"alg":"none"} payload {"sub":"1","exp":1700000000}
+  const token = "eyJhbGciOiJub25lIn0.eyJzdWIiOiIxIiwiZXhwIjoxNzAwMDAwMDAwfQ.sig";
+  const result = toolbox.runToolboxItem("jwt-decode", token);
+  assert.equal(result.ok, true);
+  assert.match(result.text, /"sub": "1"/);
+  assert.match(result.text, /exp_iso/);
+});
+
+check("timestamp convert seconds", () => {
+  const result = toolbox.runToolboxItem("timestamp-convert", "1700000000");
+  assert.equal(result.ok, true);
+  assert.match(result.text, /2023-11-14/);
+});
+
+check("yaml to json", () => {
+  const result = toolbox.runToolboxItem("yaml-to-json", "a: 1\nb:\n  c: true\n");
+  assert.equal(result.ok, true);
+  assert.equal(JSON.parse(result.text).a, 1);
+  assert.equal(JSON.parse(result.text).b.c, true);
+});
+
+check("json to yaml", () => {
+  const result = toolbox.runToolboxItem("json-to-yaml", '{"a":1,"b":{"c":true}}');
+  assert.equal(result.ok, true);
+  assert.match(result.text, /a: 1/);
+  assert.match(result.text, /c: true/);
+});
+
+check("query to json", () => {
+  const result = toolbox.runToolboxItem("query-to-json", "a=1&b=hello");
+  assert.equal(result.ok, true);
+  assert.deepEqual(JSON.parse(result.text), { a: "1", b: "hello" });
+});
+
+check("json repair", () => {
+  const result = toolbox.runToolboxItem("json-repair", "{a:1, b:'x',}");
+  assert.equal(result.ok, true);
+  assert.equal(JSON.parse(result.text).a, 1);
+  assert.equal(JSON.parse(result.text).b, "x");
+});
+
+check("json to ts", () => {
+  const result = toolbox.runToolboxItem("json-to-ts", '{"id":1,"name":"a"}');
+  assert.equal(result.ok, true);
+  assert.match(result.text, /export interface Root/);
+  assert.match(result.text, /id: number/);
+});
+
+check("hash md5", () => {
+  const result = toolbox.runToolboxItem("hash-md5", "hello");
+  assert.equal(result.ok, true);
+  assert.equal(result.text, "5d41402abc4b2a76b9719d911017c592");
+});
+
+check("hash sha256", () => {
+  const result = toolbox.runToolboxItem("hash-sha256", "hello");
+  assert.equal(result.ok, true);
+  assert.equal(result.text, "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824");
+});
+
+check("regex test", () => {
+  const result = toolbox.runToolboxItem("regex-test", "a1 b2", { pattern: "(\\w)(\\d)", flags: "g" });
+  assert.equal(result.ok, true);
+  assert.equal(result.replace, false);
+  assert.match(result.text, /#1/);
+  assert.match(result.text, /group 1/);
+});
+
+check("text diff internal", () => {
+  const result = toolbox.runToolboxItem("text-diff", "a\nb\n---\na\nc\n");
+  assert.equal(result.ok, true);
+  assert.equal(result.replace, false);
+  assert.match(result.text, /^- b/m);
+  assert.match(result.text, /^\+ c/m);
+});
+
+check("cron parse", () => {
+  const result = toolbox.runToolboxItem("cron-parse", "0 9 * * 1-5");
+  assert.equal(result.ok, true);
+  assert.match(result.text, /分: 0/);
+});
+
+check("uuid generate", () => {
+  const result = toolbox.runToolboxItem("uuid-generate", "", { count: 2 });
+  assert.equal(result.ok, true);
+  assert.equal(result.text.trim().split("\n").length, 2);
+});
+
+check("detect hints jwt", () => {
+  const token = "eyJhbGciOiJub25lIn0.eyJzdWIiOiIxIn0.x";
+  const hints = toolbox.detectToolboxHints(token);
+  assert.ok(hints.some((h) => h.toolId === "jwt-decode"));
+});
+
+check("toml to json", () => {
+  const result = toolbox.runToolboxItem("toml-to-json", 'title = "x"\n[owner]\nname = "a"\n');
+  assert.equal(result.ok, true);
+  const obj = JSON.parse(result.text);
+  assert.equal(obj.title, "x");
+  assert.equal(obj.owner.name, "a");
+});
+
+check("fullwidth to half", () => {
+  const result = toolbox.runToolboxItem("fullwidth-to-half", "ＡＢＣ１２３");
+  assert.equal(result.ok, true);
+  assert.equal(result.text, "ABC123");
+});
+
+check("cjk spacing", () => {
+  const result = toolbox.runToolboxItem("cjk-spacing", "中文abc测试123");
+  assert.equal(result.ok, true);
+  assert.equal(result.text, "中文 abc 测试 123");
+});
+
+check("strip html", () => {
+  const result = toolbox.runToolboxItem("strip-html", "<p>hi <b>x</b></p>");
+  assert.equal(result.ok, true);
+  assert.match(result.text, /hi\s+x/);
+});
+
+check("number base", () => {
+  const result = toolbox.runToolboxItem("number-base", "255", { path: "10-16" });
+  assert.equal(result.ok, true);
+  assert.equal(result.text, "FF");
+});
+
+check("json rescue recipe", () => {
+  const result = toolbox.runToolboxItem("recipe-json-fix", "{a:1,}");
+  assert.equal(result.ok, true);
+  assert.match(result.text, /"a": 1/);
 });
 
 if (failures.length) {
